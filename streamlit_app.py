@@ -165,8 +165,10 @@ def _acquire_embed_lock(session_id: str) -> bool:
         ref = db.collection("locks").document("embeddings")
         db.run_transaction(lambda tx: _tx_acquire(tx, ref, session_id))
         return True
-    except Exception:
-        return False
+    except Exception as e:
+        if "locked" in str(e):
+            return False
+        return True  # fail open — if Firestore is unavailable, don't block the run
 
 def _tx_acquire(transaction, ref, session_id):
     doc = ref.get(transaction=transaction)
