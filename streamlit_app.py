@@ -69,11 +69,36 @@ def save_upload(file_obj, state_key: str):
         st.session_state[state_key] = (file_obj.name, file_obj.read())
 
 # Session-unique ID for static file naming (avoids collisions between users)
+import time
+
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4().hex
 
 if "running" not in st.session_state:
     st.session_state["running"] = False
+
+if "last_active" not in st.session_state:
+    st.session_state["last_active"] = time.time()
+
+# ── 20-minute session timeout ─────────────────────────────────────────────────
+_SESSION_TIMEOUT = 20 * 60
+_elapsed = time.time() - st.session_state["last_active"]
+if _elapsed > _SESSION_TIMEOUT:
+    _heavy_keys = [
+        "step1_papers", "step1_embeddings",
+        "step2_edges",
+        "viz_coords", "viz_ids",
+        "vos_map", "vos_net", "viz_vos_map",
+        "s1_file", "s2_file", "s3_edges_file", "s3_meta_file",
+        "viz_embed_file", "vos_coords_file", "vos_map_meta_file",
+        "running",
+    ]
+    for k in _heavy_keys:
+        st.session_state.pop(k, None)
+    st.session_state["last_active"] = time.time()
+    st.info("Your session was reset after 20 minutes of inactivity to free up memory for other users.")
+else:
+    st.session_state["last_active"] = time.time()
 
 _is_running = st.session_state["running"]
 if _is_running:
@@ -86,7 +111,13 @@ try:
     _total_gb = _mem.total / 1024**3
     _free_gb  = _mem.available / 1024**3
     _pct      = _mem.percent
-    st.caption(f"Container memory: {_used_gb:.1f} GB used / {_total_gb:.1f} GB total — {_free_gb:.1f} GB free ({100-_pct:.0f}% available)")
+    st.caption(
+        f"Container memory: {_used_gb:.1f} GB used / {_total_gb:.1f} GB total — "
+        f"{_free_gb:.1f} GB free ({100 - _pct:.0f}% available). "
+        "This tool has limited memory shared across all users. "
+        "If memory is low, please wait for it to be released by another user. "
+        "Sessions are automatically reset after 20 minutes of inactivity."
+    )
 except Exception:
     pass
 
