@@ -72,6 +72,13 @@ def save_upload(file_obj, state_key: str):
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4().hex
 
+if "running" not in st.session_state:
+    st.session_state["running"] = False
+
+_is_running = st.session_state["running"]
+if _is_running:
+    st.warning("A job is already running in this session. Please wait for it to finish.")
+
 _STATIC_DIR = Path(__file__).parent / "static"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -105,18 +112,22 @@ with st.expander("Text to Embeddings", expanded=True):
         st.caption(f"{len(st.session_state['step1_papers'])} papers loaded.")
 
     s1_run = st.button("Run Embeddings", key="run_embed",
-                       disabled="step1_papers" not in st.session_state)
+                       disabled=_is_running or "step1_papers" not in st.session_state)
 
     if s1_run and "step1_papers" in st.session_state:
         from pipeline.embed import embed_papers
         papers = st.session_state["step1_papers"]
+        st.session_state["running"] = True
         prog = st.progress(0, text="Encoding papers…")
         def _cb(cur, tot):
             prog.progress(cur / tot, text=f"Encoding {cur}/{tot}…")
-        with st.spinner("Loading SPECTER2 model…"):
-            embeddings = embed_papers(papers, progress_callback=_cb)
-        prog.progress(1.0, text="Done.")
-        st.session_state["step1_embeddings"] = embeddings
+        try:
+            with st.spinner("Loading SPECTER2 model…"):
+                embeddings = embed_papers(papers, progress_callback=_cb)
+            prog.progress(1.0, text="Done.")
+            st.session_state["step1_embeddings"] = embeddings
+        finally:
+            st.session_state["running"] = False
         st.rerun()
 
     if "step1_embeddings" in st.session_state:
@@ -183,17 +194,21 @@ with st.expander("Text Similarity Network Map", expanded=False):
         c2.caption("Minimum similarity required to keep a connection. Higher values produce a sparser network.")
         min_sim = c2.slider("Min similarity", 0.0, 1.0, 0.0, 0.01, key="min_sim")
 
-        s2_run = st.button("Build Network", key="run_network", disabled=embed_src is None)
+        s2_run = st.button("Build Network", key="run_network", disabled=_is_running or embed_src is None)
 
         if s2_run and embed_src is not None:
             from pipeline.network import build_edge_list
+            st.session_state["running"] = True
             prog = st.progress(0, text="Building edge list…")
             def _cb(cur, tot):
                 prog.progress(cur / tot, text=f"Processing {cur}/{tot} papers…")
-            with st.spinner("Computing cosine similarities…"):
-                edges = build_edge_list(embed_src, top_k=int(top_k), min_similarity=float(min_sim), progress_callback=_cb)
-            prog.progress(1.0, text="Done.")
-            st.session_state["step2_edges"] = edges
+            try:
+                with st.spinner("Computing cosine similarities…"):
+                    edges = build_edge_list(embed_src, top_k=int(top_k), min_similarity=float(min_sim), progress_callback=_cb)
+                prog.progress(1.0, text="Done.")
+                st.session_state["step2_edges"] = edges
+            finally:
+                st.session_state["running"] = False
             st.rerun()
 
         if "step2_edges" in st.session_state:
@@ -345,14 +360,18 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
             estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
             st.caption(f"Expected time: {estimate} ({n} papers)")
 
-        sa_run = st.button("Run UMAP", key="run_umap", disabled=viz_embed_src is None)
+        sa_run = st.button("Run UMAP", key="run_umap", disabled=_is_running or viz_embed_src is None)
 
         if sa_run and viz_embed_src is not None:
             from pipeline.reduce import umap_reduce
-            with st.spinner(f"Running UMAP on {n} papers… ({estimate})"):
-                coords = umap_reduce(viz_embed_src, n_neighbors=int(umap_n_neighbors), min_dist=float(umap_min_dist))
-            st.session_state["viz_coords"] = coords
-            st.session_state["viz_ids"]    = viz_embed_ids
+            st.session_state["running"] = True
+            try:
+                with st.spinner(f"Running UMAP on {n} papers… ({estimate})"):
+                    coords = umap_reduce(viz_embed_src, n_neighbors=int(umap_n_neighbors), min_dist=float(umap_min_dist))
+                st.session_state["viz_coords"] = coords
+                st.session_state["viz_ids"]    = viz_embed_ids
+            finally:
+                st.session_state["running"] = False
             st.rerun()
 
         if "viz_coords" in st.session_state:
