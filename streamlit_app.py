@@ -102,21 +102,21 @@ if _is_running:
     st.warning("A job is already running in this session. Please wait for it to finish.")
 
 try:
-    import psutil
-    _mem = psutil.virtual_memory()
-    _used_gb  = _mem.used  / 1024**3
-    _total_gb = _mem.total / 1024**3
-    _free_gb  = _mem.available / 1024**3
-    _pct      = _mem.percent
-    st.caption(
-        f"Container memory: {_used_gb:.1f} GB used / {_total_gb:.1f} GB total — "
-        f"{_free_gb:.1f} GB free ({100 - _pct:.0f}% available). "
+    import psutil as _psutil
+    _mem = _psutil.virtual_memory()
+    _mem_used_gb  = _mem.used  / 1024**3
+    _mem_total_gb = _mem.total / 1024**3
+    _mem_free_gb  = _mem.available / 1024**3
+    _mem_pct      = _mem.percent
+    _mem_caption  = (
+        f"Container memory: {_mem_used_gb:.1f} GB used / {_mem_total_gb:.1f} GB total — "
+        f"{_mem_free_gb:.1f} GB free ({100 - _mem_pct:.0f}% available). "
         "This tool has limited memory shared across all users. "
         "If memory is low, please wait for it to be released by another user. "
-        "Sessions are automatically reset after 20 minutes of inactivity."
+        "Sessions are automatically reset after 20 minutes."
     )
 except Exception:
-    pass
+    _mem_caption = None
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _GCS_BUCKET  = "tsm-app-static"
@@ -225,6 +225,8 @@ with st.expander("Text to Embeddings", expanded=True):
 
     s1_run = st.button("Run Embeddings", key="run_embed",
                        disabled=_is_running or _embed_busy or "step1_papers" not in st.session_state)
+    if _mem_caption:
+        st.caption(_mem_caption)
 
     if s1_run and "step1_papers" in st.session_state:
         from pipeline.embed import embed_papers
