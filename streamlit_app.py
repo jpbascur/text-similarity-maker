@@ -119,6 +119,21 @@ except Exception:
     pass
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_GCS_BUCKET  = "tsm-app-static"
+_GCS_BASE    = f"https://storage.googleapis.com/{_GCS_BUCKET}"
+
+@st.cache_resource
+def _gcs_client():
+    from google.cloud import storage
+    return storage.Client(project="text-similarity-maker")
+
+def _upload_to_gcs(name: str, content: str) -> str:
+    """Upload a text file to GCS and return its public URL."""
+    client = _gcs_client()
+    bucket = client.bucket(_GCS_BUCKET)
+    blob   = bucket.blob(name)
+    blob.upload_from_string(content, content_type="text/plain")
+    return f"{_GCS_BASE}/{name}"
 
 # ── Global embedding lock (Firestore) ─────────────────────────────────────────
 _LOCK_EXPIRY = 25 * 60  # seconds — auto-release if app crashed mid-run
@@ -373,13 +388,15 @@ with st.expander("Text Similarity Network Map", expanded=False):
                 net_lines = []
                 for i, j, w in edges_src:
                     net_lines.append(f"{i + 1}\t{j + 1}\t{round(w, 6)}")
-            vos_map_str = "\n".join(map_lines)
-            vos_net_str = "\n".join(net_lines)
+                vos_map_str = "\n".join(map_lines)
+                vos_net_str = "\n".join(net_lines)
+                sid = st.session_state["session_id"]
+                map_url = _upload_to_gcs(f"{sid}_net_map.txt", vos_map_str)
+                net_url = _upload_to_gcs(f"{sid}_net_network.txt", vos_net_str)
             st.session_state["vos_map"] = vos_map_str
             st.session_state["vos_net"] = vos_net_str
-            sid = st.session_state["session_id"]
-            (_STATIC_DIR / f"{sid}_net_map.txt").write_text(vos_map_str, encoding="utf-8")
-            (_STATIC_DIR / f"{sid}_net_network.txt").write_text(vos_net_str, encoding="utf-8")
+            st.session_state["vos_map_url"] = map_url
+            st.session_state["vos_net_url"] = net_url
             st.rerun()
 
         if "vos_map" in st.session_state and "vos_net" in st.session_state:
@@ -392,24 +409,8 @@ with st.expander("Text Similarity Network Map", expanded=False):
                 "Download Network file", st.session_state["vos_net"].encode(),
                 "vosviewer_network.txt", mime="text/plain", key="dl_vos_net",
             )
-            try:
-                app_url = st.context.url
-                is_local = "localhost" in app_url or "127.0.0.1" in app_url
-            except Exception:
-                is_local = True
-
-            if is_local:
-                st.button("Open in VOSviewer Online", disabled=True, key="vos_online_btn")
-                st.caption(
-                    "Only works when deployed. For now, download the files above and upload them at "
-                    "[app.vosviewer.com](https://app.vosviewer.com)."
-                )
-            else:
-                sid = st.session_state["session_id"]
-                base = app_url.split("/app/")[0] if "/app/" in app_url else app_url.rstrip("/")
-                map_url = f"{base}/app/static/{sid}_net_map.txt"
-                net_url = f"{base}/app/static/{sid}_net_network.txt"
-                vos_url = f"https://app.vosviewer.com/?map={map_url}&network={net_url}"
+            if "vos_map_url" in st.session_state:
+                vos_url = f"https://app.vosviewer.com/?map={st.session_state['vos_map_url']}&network={st.session_state['vos_net_url']}"
                 st.link_button("Open in VOSviewer Online", vos_url)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -536,10 +537,11 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                     label = paper.get("title", pid)
                     x, y  = coord_lookup.get(pid, (0.0, 0.0))
                     map_lines.append(f"{idx + 1}\t{label}\t{pid}\t{x:.6f}\t{y:.6f}")
-            viz_map_str = "\n".join(map_lines)
+                viz_map_str = "\n".join(map_lines)
+                sid = st.session_state["session_id"]
+                umap_map_url = _upload_to_gcs(f"{sid}_umap_map.txt", viz_map_str)
             st.session_state["viz_vos_map"] = viz_map_str
-            sid = st.session_state["session_id"]
-            (_STATIC_DIR / f"{sid}_umap_map.txt").write_text(viz_map_str, encoding="utf-8")
+            st.session_state["viz_vos_map_url"] = umap_map_url
             st.rerun()
 
         if "viz_vos_map" in st.session_state:
@@ -547,21 +549,6 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                 "Download Map file", st.session_state["viz_vos_map"].encode(),
                 "vosviewer_map.txt", mime="text/plain", key="dl_viz_vos_map",
             )
-            try:
-                app_url = st.context.url
-                is_local = "localhost" in app_url or "127.0.0.1" in app_url
-            except Exception:
-                is_local = True
-
-            if is_local:
-                st.button("Open in VOSviewer Online", disabled=True, key="vos_umap_online_btn")
-                st.caption(
-                    "Only works when deployed. For now, download the file above and upload it at "
-                    "[app.vosviewer.com](https://app.vosviewer.com) under **Map file**."
-                )
-            else:
-                sid = st.session_state["session_id"]
-                base = app_url.split("/app/")[0] if "/app/" in app_url else app_url.rstrip("/")
-                map_url = f"{base}/app/static/{sid}_umap_map.txt"
-                vos_url = f"https://app.vosviewer.com/?map={map_url}"
+            if "viz_vos_map_url" in st.session_state:
+                vos_url = f"https://app.vosviewer.com/?map={st.session_state['viz_vos_map_url']}"
                 st.link_button("Open in VOSviewer Online", vos_url)
