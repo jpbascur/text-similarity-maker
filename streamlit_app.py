@@ -120,6 +120,56 @@ except Exception:
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
+# ── Global embedding lock (Firestore) ─────────────────────────────────────────
+_LOCK_EXPIRY = 25 * 60  # seconds — auto-release if app crashed mid-run
+
+@st.cache_resource
+def _firestore_client():
+    from google.cloud import firestore
+    return firestore.Client(project="text-similarity-maker")
+
+def _embed_lock_status() -> tuple[bool, str | None]:
+    """Returns (is_locked, locked_by_session_id). Auto-expires stale locks."""
+    try:
+        db  = _firestore_client()
+        doc = db.collection("locks").document("embeddings").get()
+        if not doc.exists:
+            return False, None
+        data = doc.to_dict()
+        age  = time.time() - data.get("since", 0)
+        if age > _LOCK_EXPIRY:
+            db.collection("locks").document("embeddings").delete()
+            return False, None
+        return True, data.get("session_id")
+    except Exception:
+        return False, None  # fail open so the app still works without Firestore
+
+def _acquire_embed_lock(session_id: str) -> bool:
+    try:
+        db  = _firestore_client()
+        ref = db.collection("locks").document("embeddings")
+        db.run_transaction(lambda tx: _tx_acquire(tx, ref, session_id))
+        return True
+    except Exception:
+        return False
+
+def _tx_acquire(transaction, ref, session_id):
+    doc = ref.get(transaction=transaction)
+    if doc.exists:
+        age = time.time() - doc.to_dict().get("since", 0)
+        if age <= _LOCK_EXPIRY:
+            raise Exception("locked")
+    transaction.set(ref, {"session_id": session_id, "since": time.time()})
+
+def _release_embed_lock(session_id: str):
+    try:
+        db  = _firestore_client()
+        doc = db.collection("locks").document("embeddings").get()
+        if doc.exists and doc.to_dict().get("session_id") == session_id:
+            db.collection("locks").document("embeddings").delete()
+    except Exception:
+        pass
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ROOT — EMBEDDINGS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -150,12 +200,22 @@ with st.expander("Text to Embeddings", expanded=True):
     if "step1_papers" in st.session_state:
         st.caption(f"{len(st.session_state['step1_papers'])} papers loaded.")
 
+    _global_locked, _lock_owner = _embed_lock_status()
+    _embed_busy = _global_locked and _lock_owner != st.session_state["session_id"]
+
+    if _embed_busy:
+        st.warning("Another user is currently generating embeddings. Please wait a few minutes and try again.")
+
     s1_run = st.button("Run Embeddings", key="run_embed",
-                       disabled=_is_running or "step1_papers" not in st.session_state)
+                       disabled=_is_running or _embed_busy or "step1_papers" not in st.session_state)
 
     if s1_run and "step1_papers" in st.session_state:
         from pipeline.embed import embed_papers
         papers = st.session_state["step1_papers"]
+        sid = st.session_state["session_id"]
+        if not _acquire_embed_lock(sid):
+            st.warning("Another user just started generating embeddings. Please try again in a few minutes.")
+            st.stop()
         st.session_state["running"] = True
         prog = st.progress(0, text="Encoding papers…")
         def _cb(cur, tot):
@@ -167,6 +227,7 @@ with st.expander("Text to Embeddings", expanded=True):
             st.session_state["step1_embeddings"] = embeddings
         finally:
             st.session_state["running"] = False
+            _release_embed_lock(sid)
         st.rerun()
 
     if "step1_embeddings" in st.session_state:
