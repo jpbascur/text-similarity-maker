@@ -79,6 +79,17 @@ _is_running = st.session_state["running"]
 if _is_running:
     st.warning("A job is already running in this session. Please wait for it to finish.")
 
+try:
+    import psutil
+    _mem = psutil.virtual_memory()
+    _used_gb  = _mem.used  / 1024**3
+    _total_gb = _mem.total / 1024**3
+    _free_gb  = _mem.available / 1024**3
+    _pct      = _mem.percent
+    st.caption(f"Container memory: {_used_gb:.1f} GB used / {_total_gb:.1f} GB total — {_free_gb:.1f} GB free ({100-_pct:.0f}% available)")
+except Exception:
+    pass
+
 _STATIC_DIR = Path(__file__).parent / "static"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
