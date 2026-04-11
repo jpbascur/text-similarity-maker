@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"e:\\\\Projects\\\\texsima\")",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)",
+      "WebSearch",
+      "WebFetch(domain:app.vosviewer.com)",
+      "Bash(python -c \"from pipeline.reduce import umap_reduce\")",
+      "Bash(python -c \"from pipeline.reduce import umap_reduce; print\\('ok'\\)\")",
+      "Bash(pkill -f \"streamlit run\")",
+      "Bash(taskkill /F /IM streamlit.exe)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq streamlit*\")",
+      "Bash(tasklist)",
+      "Bash(wmic process:*)",
+      "Bash(taskkill //F //PID 5756 //PID 6616)",
+      "Bash(taskkill //F //PID 35340)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}
