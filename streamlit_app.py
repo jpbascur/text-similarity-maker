@@ -481,6 +481,7 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                         "description": pid,
                         "x": round(x, 6),
                         "y": round(y, 6),
+                        "cluster": 1,
                     })
                 vos_data = {"network": {"items": items, "links": []}}
                 sid = st.session_state["session_id"]
