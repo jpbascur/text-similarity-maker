@@ -278,7 +278,7 @@ with st.expander("Text to Embeddings", expanded=True):
         disabled=not has_embed_dl,
     )
 
-    with st.expander("Import from a reference manager or database", expanded=False):
+    with st.expander("Transform file to supported format", expanded=False):
         st.caption("Converts reference exports to the CSV format the app needs. Supported formats:")
         st.caption("**PubMed** (.txt, .nbib) — Send to → File → Format: PubMed  \n**RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote  \n**BibTeX** (.bib) — exported by Google Scholar, Zotero, most reference managers")
         ref_file = st.file_uploader("Upload export file", type=["txt", "nbib", "ris", "bib"], key="ref_upload")
