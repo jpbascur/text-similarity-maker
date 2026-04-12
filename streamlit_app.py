@@ -336,7 +336,7 @@ with st.expander("Text Similarity Network Map", expanded=False):
                 "vosviewer_network.json", mime="application/json", key="dl_vos_json",
             )
             vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}"
-            st.link_button("Open in VOSviewer Online", vos_url)
+            st.link_button("🗺️ Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # BRANCH B — EMBEDDING SPACE MAP (UMAP)
@@ -479,4 +479,4 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                 "vosviewer_umap.json", mime="application/json", key="dl_viz_vos_json",
             )
             vos_url = f"https://app.vosviewer.com/?json={st.session_state['viz_vos_json_url']}"
-            st.link_button("Open in VOSviewer Online", vos_url)
+            st.link_button("🗺️ Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
