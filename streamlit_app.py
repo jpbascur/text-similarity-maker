@@ -66,6 +66,34 @@ def csv_bytes_to_array(data: bytes) -> np.ndarray:
 def show_array_info(arr: np.ndarray, label: str = "Array"):
     st.caption(f"{label}: {arr.shape[0]} papers × {arr.shape[1]} dimensions")
 
+def parse_pubmed_export(text: str) -> list[dict]:
+    """Parse a PubMed .txt or .nbib export into [{id, title, abstract}]."""
+    import re
+    records, current, current_tag = [], {}, None
+    for line in text.splitlines():
+        if re.match(r'^ER\s*-', line):
+            if current:
+                records.append(current)
+            current, current_tag = {}, None
+            continue
+        m = re.match(r'^([A-Z]+)\s*-\s+(.*)', line)
+        if m:
+            current_tag = m.group(1)
+            val = m.group(2).strip()
+            current[current_tag] = (current[current_tag] + " " + val) if current_tag in current else val
+        elif line.startswith("      ") and current_tag:
+            current[current_tag] += " " + line.strip()
+        elif not line.strip():
+            if current:
+                records.append(current)
+            current, current_tag = {}, None
+    if current:
+        records.append(current)
+    return [
+        {"id": r["PMID"].strip(), "title": r["TI"].strip(), "abstract": r.get("AB", "").strip()}
+        for r in records if "PMID" in r and "TI" in r
+    ]
+
 def save_upload(file_obj, state_key: str):
     if file_obj is not None:
         st.session_state[state_key] = (file_obj.name, file_obj.read())
@@ -192,6 +220,34 @@ with st.expander("Text to Embeddings", expanded=True):
         "embeddings.csv", mime="text/csv", key="dl_embed_csv",
         disabled=not has_embed_dl,
     )
+
+    with st.expander("Have a PubMed export? Convert it here", expanded=False):
+        st.caption("Upload a PubMed export file (.txt or .nbib) to extract IDs, titles, and abstracts into a CSV the app can use. Export from PubMed using: Send to → File → Format: PubMed.")
+        pubmed_file = st.file_uploader("Upload PubMed export", type=["txt", "nbib"], key="pubmed_upload")
+        if pubmed_file:
+            try:
+                papers_pm = parse_pubmed_export(pubmed_file.read().decode("utf-8", errors="replace"))
+                n_total = len(papers_pm)
+                n_abstract = sum(1 for p in papers_pm if p["abstract"])
+                st.caption(f"{n_total} papers found — {n_abstract} with abstracts, {n_total - n_abstract} without.")
+                if n_total > 0:
+                    buf = io.StringIO()
+                    w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
+                    w.writeheader()
+                    w.writerows(papers_pm)
+                    csv_bytes = buf.getvalue().encode()
+                    col_a, col_b = st.columns(2)
+                    if col_a.button("Load into app", key="load_pubmed"):
+                        st.session_state["s1_file"] = ("pubmed_export.csv", csv_bytes)
+                        st.session_state.pop("step1_papers", None)
+                        st.session_state.pop("step1_embeddings", None)
+                        st.rerun()
+                    col_b.download_button(
+                        "Download as CSV", csv_bytes,
+                        "pubmed_export.csv", mime="text/csv", key="dl_pubmed",
+                    )
+            except Exception as e:
+                st.error(f"Could not parse file: {e}")
 
     with st.expander("Don't have data? Try the demo data to start", expanded=False):
         st.caption("500 sample papers to try the tool without your own data.")
