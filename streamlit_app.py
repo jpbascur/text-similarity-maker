@@ -5,6 +5,7 @@ Streamlit pipeline for building VOSviewer-compatible paper networks.
 
 import csv
 import io
+import json
 import os
 import tempfile
 import uuid
@@ -12,12 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
-
-# Skip GCS in Colab; on HF Spaces use service account secret if available
-_COLAB_MODE = os.environ.get("TSM_COLAB") == "1"
-_GCS_ENABLED = not _COLAB_MODE and (
-    "SPACE_ID" not in os.environ or os.environ.get("GCS_SERVICE_ACCOUNT")
-)
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -117,28 +112,17 @@ except Exception:
     _mem_caption = None
 
 _STATIC_DIR = Path(__file__).parent / "static"
-_GCS_BUCKET  = "tsm-app-static"
-_GCS_BASE    = f"https://storage.googleapis.com/{_GCS_BUCKET}"
+_STATIC_DIR.mkdir(exist_ok=True)
 
-@st.cache_resource
-def _gcs_client():
-    from google.cloud import storage
-    sa_json = os.environ.get("GCS_SERVICE_ACCOUNT")
-    if sa_json:
-        import json
-        from google.oauth2 import service_account
-        info = json.loads(sa_json)
-        creds = service_account.Credentials.from_service_account_info(info)
-        return storage.Client(project="text-similarity-maker", credentials=creds)
-    return storage.Client(project="text-similarity-maker")
-
-def _upload_to_gcs(name: str, content: str) -> str:
-    """Upload a text file to GCS and return its public URL."""
-    client = _gcs_client()
-    bucket = client.bucket(_GCS_BUCKET)
-    blob   = bucket.blob(name)
-    blob.upload_from_string(content, content_type="text/plain")
-    return f"{_GCS_BASE}/{name}"
+def _write_static_json(filename: str, data: dict) -> str:
+    """Write a VOSviewer JSON to the static directory and return its public URL."""
+    path = _STATIC_DIR / filename
+    path.write_text(json.dumps(data), encoding="utf-8")
+    space_id = os.environ.get("SPACE_ID", "")
+    if space_id:
+        slug = space_id.replace("/", "-").lower()
+        return f"https://{slug}.hf.space/app/static/{filename}"
+    return f"http://localhost:8501/app/static/{filename}"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -321,44 +305,36 @@ with st.expander("Text Similarity Network Map", expanded=False):
             _, raw = st.session_state["s3_meta_file"]
             papers_src = list(csv.DictReader(io.StringIO(raw.decode())))
 
-        s3_run = st.button("Generate VOSviewer Files", key="run_vos",
+        s3_run = st.button("Generate VOSviewer Map", key="run_vos",
                            disabled=(edges_src is None or papers_src is None))
 
         if s3_run and edges_src is not None and papers_src is not None:
-            with st.spinner("Generating VOSviewer files…"):
-                map_lines = ["id\tlabel\tdescription"]
+            with st.spinner("Generating VOSviewer map…"):
+                items = []
                 for idx, paper in enumerate(papers_src):
-                    label = paper.get("title", paper.get("id", str(idx + 1)))
-                    description = paper.get("id", "")
-                    map_lines.append(f"{idx + 1}\t{label}\t{description}")
-                net_lines = []
-                for i, j, w in edges_src:
-                    net_lines.append(f"{i + 1}\t{j + 1}\t{round(w, 6)}")
-                vos_map_str = "\n".join(map_lines)
-                vos_net_str = "\n".join(net_lines)
-                if _GCS_ENABLED:
-                    sid = st.session_state["session_id"]
-                    map_url = _upload_to_gcs(f"{sid}_net_map.txt", vos_map_str)
-                    net_url = _upload_to_gcs(f"{sid}_net_network.txt", vos_net_str)
-                    st.session_state["vos_map_url"] = map_url
-                    st.session_state["vos_net_url"] = net_url
-            st.session_state["vos_map"] = vos_map_str
-            st.session_state["vos_net"] = vos_net_str
+                    items.append({
+                        "id": str(idx + 1),
+                        "label": paper.get("title", paper.get("id", str(idx + 1))),
+                        "description": str(paper.get("id", "")),
+                    })
+                links = [
+                    {"source_id": str(i + 1), "target_id": str(j + 1), "strength": round(w, 6)}
+                    for i, j, w in edges_src
+                ]
+                vos_data = {"network": {"items": items, "links": links}}
+                sid = st.session_state["session_id"]
+                url = _write_static_json(f"{sid}_network.json", vos_data)
+                st.session_state["vos_json"]     = json.dumps(vos_data, indent=2)
+                st.session_state["vos_json_url"] = url
             st.rerun()
 
-        if "vos_map" in st.session_state and "vos_net" in st.session_state:
-            c1, c2 = st.columns(2)
-            c1.download_button(
-                "Download Map file", st.session_state["vos_map"].encode(),
-                "vosviewer_map.txt", mime="text/plain", key="dl_vos_map",
+        if "vos_json" in st.session_state:
+            st.download_button(
+                "Download VOSviewer map (.json)", st.session_state["vos_json"].encode(),
+                "vosviewer_network.json", mime="application/json", key="dl_vos_json",
             )
-            c2.download_button(
-                "Download Network file", st.session_state["vos_net"].encode(),
-                "vosviewer_network.txt", mime="text/plain", key="dl_vos_net",
-            )
-            if "vos_map_url" in st.session_state:
-                vos_url = f"https://app.vosviewer.com/?map={st.session_state['vos_map_url']}&network={st.session_state['vos_net_url']}"
-                st.link_button("Open in VOSviewer Online", vos_url)
+            vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}"
+            st.link_button("Open in VOSviewer Online", vos_url)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # BRANCH B — EMBEDDING SPACE MAP (UMAP)
@@ -478,25 +454,29 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
         if sc_run and vos_coords is not None and vos_map_papers is not None:
             with st.spinner("Generating VOSviewer map…"):
                 coord_lookup = {pid: (float(x), float(y)) for pid, (x, y) in zip(vos_coord_ids, vos_coords)}
-                map_lines = ["id\tlabel\tdescription\tx\ty"]
+                items = []
                 for idx, paper in enumerate(vos_map_papers):
                     pid   = str(paper.get("id", idx + 1))
                     label = paper.get("title", pid)
                     x, y  = coord_lookup.get(pid, (0.0, 0.0))
-                    map_lines.append(f"{idx + 1}\t{label}\t{pid}\t{x:.6f}\t{y:.6f}")
-                viz_map_str = "\n".join(map_lines)
-                if _GCS_ENABLED:
-                    sid = st.session_state["session_id"]
-                    umap_map_url = _upload_to_gcs(f"{sid}_umap_map.txt", viz_map_str)
-                    st.session_state["viz_vos_map_url"] = umap_map_url
-            st.session_state["viz_vos_map"] = viz_map_str
+                    items.append({
+                        "id": str(idx + 1),
+                        "label": label,
+                        "description": pid,
+                        "x": round(x, 6),
+                        "y": round(y, 6),
+                    })
+                vos_data = {"network": {"items": items, "links": []}}
+                sid = st.session_state["session_id"]
+                url = _write_static_json(f"{sid}_umap.json", vos_data)
+                st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
+                st.session_state["viz_vos_json_url"] = url
             st.rerun()
 
-        if "viz_vos_map" in st.session_state:
+        if "viz_vos_json" in st.session_state:
             st.download_button(
-                "Download Map file", st.session_state["viz_vos_map"].encode(),
-                "vosviewer_map.txt", mime="text/plain", key="dl_viz_vos_map",
+                "Download VOSviewer map (.json)", st.session_state["viz_vos_json"].encode(),
+                "vosviewer_umap.json", mime="application/json", key="dl_viz_vos_json",
             )
-            if "viz_vos_map_url" in st.session_state:
-                vos_url = f"https://app.vosviewer.com/?map={st.session_state['viz_vos_map_url']}"
-                st.link_button("Open in VOSviewer Online", vos_url)
+            vos_url = f"https://app.vosviewer.com/?json={st.session_state['viz_vos_json_url']}"
+            st.link_button("Open in VOSviewer Online", vos_url)
