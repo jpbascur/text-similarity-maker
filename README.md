@@ -1,4 +1,13 @@
-# TexSiMa — Text Similarity Maker
+---
+title: Text Similarity Maker
+emoji: 🔬
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
+# TSM — Text Similarity Maker
 
 A local Streamlit pipeline that turns a list of scientific papers into a
 **VOSviewer-compatible** network. Each step can be saved and reloaded
