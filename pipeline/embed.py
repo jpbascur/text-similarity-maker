@@ -40,6 +40,26 @@ def load_papers(path: Union[str, Path]) -> list[dict]:
     return papers
 
 
+_model_cache: dict = {}
+
+def _load_model():
+    """Load and cache the SPECTER2 model and tokenizer (once per process)."""
+    if _model_cache:
+        return _model_cache["tokenizer"], _model_cache["model"]
+    from transformers import AutoTokenizer
+    from adapters import AutoAdapterModel
+    model_name = "allenai/specter2_base"
+    adapter_name = "allenai/specter2"
+    adapter_load_name = "proximity"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoAdapterModel.from_pretrained(model_name)
+    model.load_adapter(adapter_name, source="hf", load_as=adapter_load_name, set_active=True)
+    model.eval()
+    _model_cache["tokenizer"] = tokenizer
+    _model_cache["model"] = model
+    return tokenizer, model
+
+
 def embed_papers(
     papers: list[dict],
     progress_callback=None,
@@ -49,17 +69,7 @@ def embed_papers(
     Returns a float32 array of shape (N, D).
     progress_callback(current, total) is called after each batch if provided.
     """
-    from transformers import AutoTokenizer
-    from adapters import AutoAdapterModel
-
-    model_name = "allenai/specter2_base"
-    adapter_name = "allenai/specter2"
-    adapter_load_name = "proximity"
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoAdapterModel.from_pretrained(model_name)
-    model.load_adapter(adapter_name, source="hf", load_as=adapter_load_name, set_active=True)
-    model.eval()
+    tokenizer, model = _load_model()
 
     batch_size = 16
     all_embeddings = []
