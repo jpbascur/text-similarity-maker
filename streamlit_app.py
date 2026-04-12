@@ -13,8 +13,8 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
-# In Colab, skip all GCP services (Firestore lock, GCS file hosting)
-_COLAB_MODE = os.environ.get("TSM_COLAB") == "1"
+# Skip GCP services (Firestore lock, GCS file hosting) in Colab and HF Spaces
+_COLAB_MODE = os.environ.get("TSM_COLAB") == "1" or "SPACE_ID" in os.environ
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
