@@ -259,8 +259,8 @@ with st.expander("Text to Embeddings", expanded=True):
         def _cb(cur, tot):
             prog.progress(cur / tot, text=f"Encoding {cur}/{tot}…")
         try:
-            with st.spinner("Loading SPECTER2 model…"):
-                embeddings = embed_papers(papers, progress_callback=_cb)
+            prog.progress(0, text="Loading SPECTER2 model…")
+            embeddings = embed_papers(papers, progress_callback=_cb)
             prog.progress(1.0, text="Done.")
             st.session_state["step1_embeddings"] = embeddings
         finally:
