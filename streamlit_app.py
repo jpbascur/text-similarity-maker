@@ -25,6 +25,7 @@ st.title("🔬 TSM — Text Similarity Maker")
 st.header("Create a text similarity science map")
 st.write("Generate embeddings of your documents' titles and abstracts — a numerical representation of their semantic content. Then use those embeddings to build a science map. Two map types are available: a text similarity network map, and an embedding space reduction map.")
 st.markdown("Built by [Juan Pablo Bascur](https://jpbascur.com) — Problems? Contact [juanpablobascurcifuentes@gmail.com](mailto:juanpablobascurcifuentes@gmail.com)")
+st.markdown("Source code: [github.com/jpbascur/text-similarity-maker](https://github.com/jpbascur/text-similarity-maker)")
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
