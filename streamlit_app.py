@@ -173,6 +173,10 @@ with st.expander("Text to Embeddings", expanded=True):
             st.session_state["step1_embeddings"] = embeddings
         finally:
             st.session_state["running"] = False
+        st.session_state["use_step1_net"]          = True
+        st.session_state["use_step1_umap"]         = True
+        st.session_state["use_step1_meta"]         = True
+        st.session_state["use_step1_vos_map_meta"] = True
         st.rerun()
 
     if "step1_embeddings" in st.session_state:
@@ -253,6 +257,7 @@ with st.expander("Text Similarity Network Map", expanded=False):
                 st.session_state["step2_edges"] = edges
             finally:
                 st.session_state["running"] = False
+            st.session_state["use_step2_edges"] = True
             st.rerun()
 
         if "step2_edges" in st.session_state:
@@ -392,6 +397,7 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                 st.session_state["viz_ids"]    = viz_embed_ids
             finally:
                 st.session_state["running"] = False
+            st.session_state["use_viz_coords_vos"] = True
             st.rerun()
 
         if "viz_coords" in st.session_state:
