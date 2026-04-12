@@ -94,6 +94,60 @@ def parse_pubmed_export(text: str) -> list[dict]:
         for r in records if "PMID" in r and "TI" in r
     ]
 
+def parse_ris_export(text: str) -> list[dict]:
+    """Parse a RIS (.ris) export into [{id, title, abstract}]."""
+    import re
+    records, current, current_tag = [], {}, None
+    for line in text.splitlines():
+        if re.match(r'^ER\s*-', line):
+            if current:
+                records.append(current)
+            current, current_tag = {}, None
+            continue
+        m = re.match(r'^([A-Z][A-Z0-9])\s+-\s+(.*)', line)
+        if m:
+            current_tag = m.group(1)
+            val = m.group(2).strip()
+            current[current_tag] = (current[current_tag] + " " + val) if current_tag in current else val
+        elif line.startswith("  ") and current_tag:
+            current[current_tag] += " " + line.strip()
+        elif not line.strip():
+            if current:
+                records.append(current)
+            current, current_tag = {}, None
+    if current:
+        records.append(current)
+    result = []
+    for i, r in enumerate(records):
+        id_ = r.get("ID") or r.get("AN") or r.get("UT") or r.get("DO") or str(i + 1)
+        title = r.get("TI") or r.get("T1", "")
+        abstract = r.get("AB") or r.get("N2", "")
+        if title:
+            result.append({"id": id_.strip(), "title": title.strip(), "abstract": abstract.strip()})
+    return result
+
+def parse_bibtex_export(text: str) -> list[dict]:
+    """Parse a BibTeX (.bib) export into [{id, title, abstract}]."""
+    import re
+    result = []
+    for entry in re.split(r'(?=@\w+\{)', text):
+        key_m = re.match(r'@\w+\{([^,\n]+),', entry)
+        if not key_m:
+            continue
+        key = key_m.group(1).strip()
+        def _field(name):
+            m = re.search(rf'\b{name}\s*=\s*\{{([^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)\}}', entry, re.IGNORECASE)
+            if not m:
+                m = re.search(rf'\b{name}\s*=\s*"([^"]*)"', entry, re.IGNORECASE)
+            if m:
+                return re.sub(r'\{([^{}]*)\}', r'\1', m.group(1)).strip()
+            return ""
+        title = _field("title")
+        abstract = _field("abstract")
+        if title:
+            result.append({"id": key, "title": title, "abstract": abstract})
+    return result
+
 def save_upload(file_obj, state_key: str):
     if file_obj is not None:
         st.session_state[state_key] = (file_obj.name, file_obj.read())
@@ -221,30 +275,38 @@ with st.expander("Text to Embeddings", expanded=True):
         disabled=not has_embed_dl,
     )
 
-    with st.expander("Have a PubMed export? Convert it here", expanded=False):
-        st.caption("Upload a PubMed export file (.txt or .nbib) to extract IDs, titles, and abstracts into a CSV the app can use. Export from PubMed using: Send to → File → Format: PubMed.")
-        pubmed_file = st.file_uploader("Upload PubMed export", type=["txt", "nbib"], key="pubmed_upload")
-        if pubmed_file:
+    with st.expander("Import from a reference manager or database", expanded=False):
+        st.caption("Converts reference exports to the CSV format the app needs. Supported formats:")
+        st.caption("**PubMed** (.txt, .nbib) — Send to → File → Format: PubMed  \n**RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote  \n**BibTeX** (.bib) — exported by Google Scholar, Zotero, most reference managers")
+        ref_file = st.file_uploader("Upload export file", type=["txt", "nbib", "ris", "bib"], key="ref_upload")
+        if ref_file:
             try:
-                papers_pm = parse_pubmed_export(pubmed_file.read().decode("utf-8", errors="replace"))
-                n_total = len(papers_pm)
-                n_abstract = sum(1 for p in papers_pm if p["abstract"])
+                text = ref_file.read().decode("utf-8", errors="replace")
+                ext = Path(ref_file.name).suffix.lower()
+                if ext == ".bib":
+                    papers_ref = parse_bibtex_export(text)
+                elif ext == ".ris":
+                    papers_ref = parse_ris_export(text)
+                else:
+                    papers_ref = parse_pubmed_export(text)
+                n_total = len(papers_ref)
+                n_abstract = sum(1 for p in papers_ref if p["abstract"])
                 st.caption(f"{n_total} papers found — {n_abstract} with abstracts, {n_total - n_abstract} without.")
                 if n_total > 0:
                     buf = io.StringIO()
                     w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
                     w.writeheader()
-                    w.writerows(papers_pm)
+                    w.writerows(papers_ref)
                     csv_bytes = buf.getvalue().encode()
                     col_a, col_b = st.columns(2)
-                    if col_a.button("Load into app", key="load_pubmed"):
-                        st.session_state["s1_file"] = ("pubmed_export.csv", csv_bytes)
+                    if col_a.button("Load into app", key="load_ref"):
+                        st.session_state["s1_file"] = ("papers.csv", csv_bytes)
                         st.session_state.pop("step1_papers", None)
                         st.session_state.pop("step1_embeddings", None)
                         st.rerun()
                     col_b.download_button(
                         "Download as CSV", csv_bytes,
-                        "pubmed_export.csv", mime="text/csv", key="dl_pubmed",
+                        "papers.csv", mime="text/csv", key="dl_ref",
                     )
             except Exception as e:
                 st.error(f"Could not parse file: {e}")
