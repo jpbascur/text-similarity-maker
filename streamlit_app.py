@@ -219,6 +219,11 @@ with st.expander("Text to Embeddings", expanded=True):
         st.file_uploader("Upload papers file", type=["csv"], key="s1_upload"),
         "s1_file",
     )
+    ignore_incomplete = st.checkbox("Ignore documents without title or abstract", value=True, key="s1_ignore_incomplete")
+
+    # Reload papers if checkbox changed since last load
+    if st.session_state.get("s1_ignore_incomplete_applied") != ignore_incomplete:
+        st.session_state.pop("step1_papers", None)
 
     if "s1_file" in st.session_state and "step1_papers" not in st.session_state:
         from pipeline.embed import load_papers
@@ -228,7 +233,11 @@ with st.expander("Text to Embeddings", expanded=True):
             tmp.write(raw)
             tmp_path = Path(tmp.name)
         try:
-            st.session_state["step1_papers"] = load_papers(tmp_path)
+            papers = load_papers(tmp_path)
+            if ignore_incomplete:
+                papers = [p for p in papers if p.get("title", "").strip() and p.get("abstract", "").strip()]
+            st.session_state["step1_papers"] = papers
+            st.session_state["s1_ignore_incomplete_applied"] = ignore_incomplete
         except Exception as e:
             st.error(f"Could not load papers: {e}")
         finally:
