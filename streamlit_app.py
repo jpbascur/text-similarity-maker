@@ -328,20 +328,31 @@ with st.expander("Text Similarity Network Map", expanded=False):
                         "label": paper.get("title", paper.get("id", str(idx + 1))),
                         "description": str(paper.get("id", "")),
                     })
+                items_no_cluster = [{**item, "cluster": 1} for item in items]
                 links = [
                     {"source_id": str(i + 1), "target_id": str(j + 1), "strength": round(w, 6)}
                     for i, j, w in edges_src
                 ]
-                vos_data = {"network": {"items": items, "links": links}}
                 sid = st.session_state["session_id"]
-                url = _write_static_json(f"{sid}_network.json", vos_data)
-                st.session_state["vos_json"]     = json.dumps(vos_data, indent=2)
-                st.session_state["vos_json_url"] = url
+                vos_data_auto  = {"network": {"items": items,            "links": links}}
+                vos_data_fixed = {"network": {"items": items_no_cluster, "links": links}}
+                st.session_state["vos_json_auto"]    = json.dumps(vos_data_auto,  indent=2)
+                st.session_state["vos_json_fixed"]   = json.dumps(vos_data_fixed, indent=2)
+                st.session_state["vos_json_url_auto"]  = _write_static_json(f"{sid}_network_auto.json",  vos_data_auto)
+                st.session_state["vos_json_url_fixed"] = _write_static_json(f"{sid}_network_fixed.json", vos_data_fixed)
+            st.session_state["vos_do_cluster"] = True
             st.rerun()
 
-        has_vos_json = "vos_json" in st.session_state
-        vos_dl_data = st.session_state["vos_json"].encode() if has_vos_json else b""
-        vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}&max_n_links=0" if has_vos_json else "https://app.vosviewer.com/"
+        has_vos_json = "vos_json_auto" in st.session_state
+        do_cluster = st.checkbox(
+            "Open and cluster (may be slow in dense networks)",
+            key="vos_do_cluster", value=True, disabled=not has_vos_json,
+        )
+        vos_dl_data = st.session_state["vos_json_auto" if do_cluster else "vos_json_fixed"].encode() if has_vos_json else b""
+        vos_url = (
+            f"https://app.vosviewer.com/?json={st.session_state['vos_json_url_auto' if do_cluster else 'vos_json_url_fixed']}&max_n_links=0"
+            if has_vos_json else "https://app.vosviewer.com/"
+        )
         st.download_button(
             "Download VOSviewer map (.json)", vos_dl_data,
             "vosviewer_network.json", mime="application/json", key="dl_vos_json",
