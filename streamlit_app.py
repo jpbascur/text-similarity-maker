@@ -106,12 +106,25 @@ if _is_running:
     st.warning("A job is already running in this session. Please wait for it to finish.")
 
 try:
-    import psutil as _psutil
-    _mem = _psutil.virtual_memory()
-    _mem_used_gb  = _mem.used  / 1024**3
-    _mem_total_gb = _mem.total / 1024**3
-    _mem_free_gb  = _mem.available / 1024**3
-    _mem_pct      = _mem.percent
+    def _read_cgroup_mem():
+        """Read container memory limits from cgroup (accurate inside Docker)."""
+        # Try cgroups v2 first
+        try:
+            limit = int(Path("/sys/fs/cgroup/memory.max").read_text().strip())
+            usage = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
+            return usage, limit
+        except Exception:
+            pass
+        # Fall back to cgroups v1
+        limit = int(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes").read_text().strip())
+        usage = int(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes").read_text().strip())
+        return usage, limit
+
+    _mem_used, _mem_limit = _read_cgroup_mem()
+    _mem_used_gb  = _mem_used  / 1024**3
+    _mem_total_gb = _mem_limit / 1024**3
+    _mem_free_gb  = (_mem_limit - _mem_used) / 1024**3
+    _mem_pct      = _mem_used / _mem_limit * 100
     _mem_caption  = (
         f"Container memory: {_mem_used_gb:.1f} GB used / {_mem_total_gb:.1f} GB total — "
         f"{_mem_free_gb:.1f} GB free ({100 - _mem_pct:.0f}% available). "
