@@ -13,8 +13,11 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
-# Skip GCP services (Firestore lock, GCS file hosting) in Colab and HF Spaces
-_COLAB_MODE = os.environ.get("TSM_COLAB") == "1" or "SPACE_ID" in os.environ
+# Skip GCS in Colab; on HF Spaces use service account secret if available
+_COLAB_MODE = os.environ.get("TSM_COLAB") == "1"
+_GCS_ENABLED = not _COLAB_MODE and (
+    "SPACE_ID" not in os.environ or os.environ.get("GCS_SERVICE_ACCOUNT")
+)
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -120,6 +123,13 @@ _GCS_BASE    = f"https://storage.googleapis.com/{_GCS_BUCKET}"
 @st.cache_resource
 def _gcs_client():
     from google.cloud import storage
+    sa_json = os.environ.get("GCS_SERVICE_ACCOUNT")
+    if sa_json:
+        import json
+        from google.oauth2 import service_account
+        info = json.loads(sa_json)
+        creds = service_account.Credentials.from_service_account_info(info)
+        return storage.Client(project="text-similarity-maker", credentials=creds)
     return storage.Client(project="text-similarity-maker")
 
 def _upload_to_gcs(name: str, content: str) -> str:
@@ -326,7 +336,7 @@ with st.expander("Text Similarity Network Map", expanded=False):
                     net_lines.append(f"{i + 1}\t{j + 1}\t{round(w, 6)}")
                 vos_map_str = "\n".join(map_lines)
                 vos_net_str = "\n".join(net_lines)
-                if not _COLAB_MODE:
+                if _GCS_ENABLED:
                     sid = st.session_state["session_id"]
                     map_url = _upload_to_gcs(f"{sid}_net_map.txt", vos_map_str)
                     net_url = _upload_to_gcs(f"{sid}_net_network.txt", vos_net_str)
@@ -475,7 +485,7 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                     x, y  = coord_lookup.get(pid, (0.0, 0.0))
                     map_lines.append(f"{idx + 1}\t{label}\t{pid}\t{x:.6f}\t{y:.6f}")
                 viz_map_str = "\n".join(map_lines)
-                if not _COLAB_MODE:
+                if _GCS_ENABLED:
                     sid = st.session_state["session_id"]
                     umap_map_url = _upload_to_gcs(f"{sid}_umap_map.txt", viz_map_str)
                     st.session_state["viz_vos_map_url"] = umap_map_url
