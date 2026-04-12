@@ -73,33 +73,12 @@ def save_upload(file_obj, state_key: str):
         st.session_state[state_key] = (file_obj.name, file_obj.read())
 
 # Session-unique ID for static file naming (avoids collisions between users)
-import time
-
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4().hex
 
 if "running" not in st.session_state:
     st.session_state["running"] = False
 
-if "session_start" not in st.session_state:
-    st.session_state["session_start"] = time.time()
-
-# ── 20-minute hard session timeout ───────────────────────────────────────────
-_SESSION_TIMEOUT = 20 * 60
-_elapsed = time.time() - st.session_state["session_start"]
-if _elapsed > _SESSION_TIMEOUT:
-    _heavy_keys = [
-        "step1_papers", "step1_embeddings",
-        "step2_edges",
-        "viz_coords", "viz_ids",
-        "vos_map", "vos_net", "viz_vos_map",
-        "s1_file", "s2_file", "s3_edges_file", "s3_meta_file",
-        "viz_embed_file", "vos_coords_file", "vos_map_meta_file",
-        "running", "session_start",
-    ]
-    for k in _heavy_keys:
-        st.session_state.pop(k, None)
-    st.info("Your session was reset after 20 minutes to free up memory for other users.")
 
 _is_running = st.session_state["running"]
 if _is_running:
@@ -129,8 +108,7 @@ try:
         f"Container memory: {_mem_used_gb:.1f} GB used / {_mem_total_gb:.1f} GB total — "
         f"{_mem_free_gb:.1f} GB free ({100 - _mem_pct:.0f}% available). "
         "This tool has limited memory shared across all users. "
-        "If memory is low, please wait for it to be released by another user. "
-        "Sessions are automatically reset after 20 minutes."
+        "If memory is low, please wait for it to be released by another user."
     )
 except Exception:
     _mem_caption = None
