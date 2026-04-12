@@ -71,7 +71,7 @@ def embed_papers(
     """
     tokenizer, model = _load_model()
 
-    batch_size = 16
+    batch_size = 64
     all_embeddings = []
     total = len(papers)
 
