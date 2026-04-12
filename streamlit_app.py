@@ -5,12 +5,16 @@ Streamlit pipeline for building VOSviewer-compatible paper networks.
 
 import csv
 import io
+import os
 import tempfile
 import uuid
 from pathlib import Path
 
 import numpy as np
 import streamlit as st
+
+# In Colab, skip all GCP services (Firestore lock, GCS file hosting)
+_COLAB_MODE = os.environ.get("TSM_COLAB") == "1"
 
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -217,11 +221,13 @@ with st.expander("Text to Embeddings", expanded=True):
     if "step1_papers" in st.session_state:
         st.caption(f"{len(st.session_state['step1_papers'])} papers loaded.")
 
-    _global_locked, _lock_owner = _embed_lock_status()
-    _embed_busy = _global_locked and _lock_owner != st.session_state["session_id"]
-
-    if _embed_busy:
-        st.warning("Another user is currently generating embeddings. Please wait a few minutes and try again.")
+    if not _COLAB_MODE:
+        _global_locked, _lock_owner = _embed_lock_status()
+        _embed_busy = _global_locked and _lock_owner != st.session_state["session_id"]
+        if _embed_busy:
+            st.warning("Another user is currently generating embeddings. Please wait a few minutes and try again.")
+    else:
+        _embed_busy = False
 
     s1_run = st.button("Run Embeddings", key="run_embed",
                        disabled=_is_running or _embed_busy or "step1_papers" not in st.session_state)
@@ -232,7 +238,7 @@ with st.expander("Text to Embeddings", expanded=True):
         from pipeline.embed import embed_papers
         papers = st.session_state["step1_papers"]
         sid = st.session_state["session_id"]
-        if not _acquire_embed_lock(sid):
+        if not _COLAB_MODE and not _acquire_embed_lock(sid):
             st.warning("Another user just started generating embeddings. Please try again in a few minutes.")
             st.stop()
         st.session_state["running"] = True
@@ -246,7 +252,8 @@ with st.expander("Text to Embeddings", expanded=True):
             st.session_state["step1_embeddings"] = embeddings
         finally:
             st.session_state["running"] = False
-            _release_embed_lock(sid)
+            if not _COLAB_MODE:
+                _release_embed_lock(sid)
         st.rerun()
 
     if "step1_embeddings" in st.session_state:
@@ -394,13 +401,14 @@ with st.expander("Text Similarity Network Map", expanded=False):
                     net_lines.append(f"{i + 1}\t{j + 1}\t{round(w, 6)}")
                 vos_map_str = "\n".join(map_lines)
                 vos_net_str = "\n".join(net_lines)
-                sid = st.session_state["session_id"]
-                map_url = _upload_to_gcs(f"{sid}_net_map.txt", vos_map_str)
-                net_url = _upload_to_gcs(f"{sid}_net_network.txt", vos_net_str)
+                if not _COLAB_MODE:
+                    sid = st.session_state["session_id"]
+                    map_url = _upload_to_gcs(f"{sid}_net_map.txt", vos_map_str)
+                    net_url = _upload_to_gcs(f"{sid}_net_network.txt", vos_net_str)
+                    st.session_state["vos_map_url"] = map_url
+                    st.session_state["vos_net_url"] = net_url
             st.session_state["vos_map"] = vos_map_str
             st.session_state["vos_net"] = vos_net_str
-            st.session_state["vos_map_url"] = map_url
-            st.session_state["vos_net_url"] = net_url
             st.rerun()
 
         if "vos_map" in st.session_state and "vos_net" in st.session_state:
@@ -542,10 +550,11 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                     x, y  = coord_lookup.get(pid, (0.0, 0.0))
                     map_lines.append(f"{idx + 1}\t{label}\t{pid}\t{x:.6f}\t{y:.6f}")
                 viz_map_str = "\n".join(map_lines)
-                sid = st.session_state["session_id"]
-                umap_map_url = _upload_to_gcs(f"{sid}_umap_map.txt", viz_map_str)
+                if not _COLAB_MODE:
+                    sid = st.session_state["session_id"]
+                    umap_map_url = _upload_to_gcs(f"{sid}_umap_map.txt", viz_map_str)
+                    st.session_state["viz_vos_map_url"] = umap_map_url
             st.session_state["viz_vos_map"] = viz_map_str
-            st.session_state["viz_vos_map_url"] = umap_map_url
             st.rerun()
 
         if "viz_vos_map" in st.session_state:
