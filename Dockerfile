@@ -1,16 +1,8 @@
-FROM python:3.11-slim
+FROM ghcr.io/jpbascur/tsm-base:latest
 
 WORKDIR /app
 
-# Install dependencies first (cached layer)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Pre-download SPECTER2 model and adapter into the image
-COPY download_model.py .
-RUN python download_model.py
-
-# Copy app code
+# Copy app code only — deps and model are in the base image
 COPY . .
 
 EXPOSE 7860
