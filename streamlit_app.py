@@ -179,15 +179,19 @@ with st.expander("Text to Embeddings", expanded=True):
         st.session_state["use_step1_vos_map_meta"] = True
         st.rerun()
 
-    if "step1_embeddings" in st.session_state:
+    has_embed_dl = "step1_embeddings" in st.session_state
+    if has_embed_dl:
         embeddings = st.session_state["step1_embeddings"]
         papers     = st.session_state["step1_papers"]
         show_array_info(embeddings, "Embeddings ready")
-        st.download_button(
-            "Download embeddings (.csv)",
-            array_to_csv_bytes(embeddings, ids=[p["id"] for p in papers]),
-            "embeddings.csv", mime="text/csv", key="dl_embed_csv",
-        )
+        embed_dl_data = array_to_csv_bytes(embeddings, ids=[p["id"] for p in papers])
+    else:
+        embed_dl_data = b""
+    st.download_button(
+        "Download embeddings (.csv)", embed_dl_data,
+        "embeddings.csv", mime="text/csv", key="dl_embed_csv",
+        disabled=not has_embed_dl,
+    )
 
     with st.expander("Don't have data? Try the demo data to start", expanded=False):
         st.caption("500 sample papers to try the tool without your own data.")
@@ -260,17 +264,22 @@ with st.expander("Text Similarity Network Map", expanded=False):
             st.session_state["use_step2_edges"] = True
             st.rerun()
 
-        if "step2_edges" in st.session_state:
+        has_edges_dl = "step2_edges" in st.session_state
+        if has_edges_dl:
             edges = st.session_state["step2_edges"]
             st.caption(f"{len(edges)} edges ready.")
             edge_buf = io.StringIO()
             ew = csv.writer(edge_buf)
             ew.writerow(["source", "target", "weight"])
             ew.writerows(edges)
-            st.download_button(
-                "Download edge list (.csv)", edge_buf.getvalue().encode(),
-                "network.csv", mime="text/csv", key="dl_network",
-            )
+            edge_dl_data = edge_buf.getvalue().encode()
+        else:
+            edge_dl_data = b""
+        st.download_button(
+            "Download edge list (.csv)", edge_dl_data,
+            "network.csv", mime="text/csv", key="dl_network",
+            disabled=not has_edges_dl,
+        )
 
     # ── VOSviewer Export ──
     with st.container(border=True):
@@ -330,13 +339,15 @@ with st.expander("Text Similarity Network Map", expanded=False):
                 st.session_state["vos_json_url"] = url
             st.rerun()
 
-        if "vos_json" in st.session_state:
-            st.download_button(
-                "Download VOSviewer map (.json)", st.session_state["vos_json"].encode(),
-                "vosviewer_network.json", mime="application/json", key="dl_vos_json",
-            )
-            vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}"
-            st.link_button("🗺️ Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
+        has_vos_json = "vos_json" in st.session_state
+        vos_dl_data = st.session_state["vos_json"].encode() if has_vos_json else b""
+        vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}" if has_vos_json else "https://app.vosviewer.com/"
+        st.download_button(
+            "Download VOSviewer map (.json)", vos_dl_data,
+            "vosviewer_network.json", mime="application/json", key="dl_vos_json",
+            disabled=not has_vos_json,
+        )
+        st.link_button("🗺️ Open in VOSviewer Online", vos_url, type="primary", use_container_width=True, disabled=not has_vos_json)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # BRANCH B — EMBEDDING SPACE MAP (UMAP)
@@ -400,16 +411,21 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
             st.session_state["use_viz_coords_vos"] = True
             st.rerun()
 
-        if "viz_coords" in st.session_state:
+        has_coords_dl = "viz_coords" in st.session_state
+        if has_coords_dl:
             st.caption(f"{len(st.session_state['viz_coords'])} points projected.")
             coords_buf = io.StringIO()
             coords_buf.write("id,x,y\n")
             for pid, (x, y) in zip(st.session_state["viz_ids"], st.session_state["viz_coords"]):
                 coords_buf.write(f"{pid},{x:.6f},{y:.6f}\n")
-            st.download_button(
-                "Download coords (.csv)", coords_buf.getvalue().encode(),
-                "coords.csv", mime="text/csv", key="dl_coords",
-            )
+            coords_dl_data = coords_buf.getvalue().encode()
+        else:
+            coords_dl_data = b""
+        st.download_button(
+            "Download coords (.csv)", coords_dl_data,
+            "coords.csv", mime="text/csv", key="dl_coords",
+            disabled=not has_coords_dl,
+        )
 
     # ── VOSviewer Map Export ──
     with st.container(border=True):
@@ -473,10 +489,12 @@ with st.expander("Embedding Space Reduction Map", expanded=False):
                 st.session_state["viz_vos_json_url"] = url
             st.rerun()
 
-        if "viz_vos_json" in st.session_state:
-            st.download_button(
-                "Download VOSviewer map (.json)", st.session_state["viz_vos_json"].encode(),
-                "vosviewer_umap.json", mime="application/json", key="dl_viz_vos_json",
-            )
-            vos_url = f"https://app.vosviewer.com/?json={st.session_state['viz_vos_json_url']}"
-            st.link_button("🗺️ Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
+        has_viz_vos_json = "viz_vos_json" in st.session_state
+        viz_vos_dl_data = st.session_state["viz_vos_json"].encode() if has_viz_vos_json else b""
+        viz_vos_url = f"https://app.vosviewer.com/?json={st.session_state['viz_vos_json_url']}" if has_viz_vos_json else "https://app.vosviewer.com/"
+        st.download_button(
+            "Download VOSviewer map (.json)", viz_vos_dl_data,
+            "vosviewer_umap.json", mime="application/json", key="dl_viz_vos_json",
+            disabled=not has_viz_vos_json,
+        )
+        st.link_button("🗺️ Open in VOSviewer Online", viz_vos_url, type="primary", use_container_width=True, disabled=not has_viz_vos_json)
