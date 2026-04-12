@@ -341,7 +341,7 @@ with st.expander("Text Similarity Network Map", expanded=False):
 
         has_vos_json = "vos_json" in st.session_state
         vos_dl_data = st.session_state["vos_json"].encode() if has_vos_json else b""
-        vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}" if has_vos_json else "https://app.vosviewer.com/"
+        vos_url = f"https://app.vosviewer.com/?json={st.session_state['vos_json_url']}&max_n_links=0" if has_vos_json else "https://app.vosviewer.com/"
         st.download_button(
             "Download VOSviewer map (.json)", vos_dl_data,
             "vosviewer_network.json", mime="application/json", key="dl_vos_json",
