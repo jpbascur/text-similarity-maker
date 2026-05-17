@@ -624,6 +624,8 @@ with st.expander("1. Paper Input", expanded=False):
     if st.session_state.get("_upload_error_s1_raw_upload"):
         st.error(st.session_state["_upload_error_s1_raw_upload"])
 
+    ignore = st.checkbox("Ignore papers without title or abstract", value=True, key="s1_ignore_incomplete")
+
     if "raw_file" in st.session_state:
         raw_fname, raw_bytes = st.session_state["raw_file"]
         cache_key = ("raw_parsed", raw_fname, len(raw_bytes))
@@ -650,7 +652,6 @@ with st.expander("1. Paper Input", expanded=False):
             n_total = len(papers_ref)
             n_abstract = sum(1 for p in papers_ref if p["abstract"])
             st.caption(f"{n_total} papers found - {n_abstract} with abstracts, {n_total - n_abstract} without.")
-            ignore = st.checkbox("Ignore papers without title or abstract", value=True, key="s1_ignore_incomplete")
             if n_total > 0 and st.button("Use these papers", key="load_ref", type="primary"):
                 papers_to_use = papers_ref
                 if ignore:
