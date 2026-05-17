@@ -38,7 +38,7 @@ st.markdown(
     "- **BibTeX** (.bib) — exported by Google Scholar, Zotero, and most reference managers\n"
     "- **PubMed** (.txt) — from PubMed: click *Send to* → *File* → Format: *PubMed*\n"
     "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*\n"
-    "- **Excel** (.xlsx) — spreadsheet with columns named *title* and *abstract* (and optionally *id*)"
+    "- **Excel** (.xlsx) — for manually built spreadsheets; must have columns named *id*, *title*, and *abstract*"
 )
 with st.expander("How to export with abstracts included", expanded=False):
     st.markdown(
@@ -113,15 +113,11 @@ with st.expander("How to export with abstracts included", expanded=False):
 
         "---\n\n"
 
-        "**Excel** (.xlsx) — use this if your paper list is already in a spreadsheet\n\n"
-        "The file must have a column named **title** and a column named **abstract** "
-        "(column names are not case-sensitive). "
-        "An **id** column is optional — if missing, papers are numbered automatically.\n\n"
-        "1. Open your spreadsheet in Excel.\n"
-        "2. Make sure there is a *title* column and an *abstract* column.\n"
-        "3. Go to **File** → **Save As**, choose format **Excel Workbook (.xlsx)**.\n\n"
-        "If your spreadsheet came from a database export (e.g. Scopus CSV), "
-        "look for a column containing the abstract text and rename it to *abstract* if needed."
+        "**Excel** (.xlsx) — for a spreadsheet you are building manually\n\n"
+        "If you are assembling a paper list yourself (e.g. by copy-pasting titles and abstracts), "
+        "create a spreadsheet with three columns: **id**, **title**, and **abstract**. "
+        "Column names are not case-sensitive. Every row must have a value in all three columns. "
+        "Save the file as **.xlsx** (Excel Workbook) before uploading."
     )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -345,22 +341,21 @@ def parse_excel_export(data: bytes) -> list[dict]:
         return None
     title_col    = _find("title", "paper title", "article title")
     abstract_col = _find("abstract", "summary")
-    id_col       = _find("id", "pmid", "doi", "accession number", "accession", "ut")
-    if title_col is None:
+    id_col       = _find("id")
+    missing = [name for name, col in [("id", id_col), ("title", title_col), ("abstract", abstract_col)] if col is None]
+    if missing:
         raise ValueError(
-            f"No title column found. Columns in file: {list(df.columns)}. "
-            "Add a column named 'title'."
-        )
-    if abstract_col is None:
-        raise ValueError(
-            f"No abstract column found. Columns in file: {list(df.columns)}. "
-            "Add a column named 'abstract'."
+            f"Missing required column(s): {missing}. "
+            f"Columns found in file: {list(df.columns)}. "
+            "The spreadsheet must have columns named 'id', 'title', and 'abstract'."
         )
     result = []
     for i, row in df.iterrows():
         title    = row[title_col].strip()
         abstract = row[abstract_col].strip()
-        id_      = row[id_col].strip() if id_col and row[id_col].strip() else str(i + 1)
+        id_      = row[id_col].strip()
+        if not id_:
+            raise ValueError(f"Row {i + 1} has an empty id. Every row must have an id value.")
         if title:
             result.append({"id": id_, "title": title, "abstract": abstract})
     return result
