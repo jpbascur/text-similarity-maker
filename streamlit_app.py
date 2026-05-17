@@ -691,29 +691,28 @@ with st.expander("2. Embeddings", expanded=False):
     st.caption("Runs using SPECTER2. Papers without title or abstract are skipped.")
     if _mem_caption:
         st.caption(_mem_caption)
-    _has_papers = "step1_papers" in st.session_state
-    if not _has_papers:
-        st.caption("No papers in the tool yet. Upload a file in the Paper Input section.")
-    if st.button("Generate embeddings", key="run_embed",
-                 disabled=_is_running or not _has_papers, use_container_width=True):
-        from pipeline.embed import embed_papers
-        papers = [p for p in st.session_state["step1_papers"]
-                  if p.get("title", "").strip() and p.get("abstract", "").strip()]
-        st.session_state["running"] = True
-        prog = st.progress(0, text="Loading SPECTER2 model...")
-        def _cb(cur, tot):
-            prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
-        try:
-            embeddings = embed_papers(papers, progress_callback=_cb)
-            prog.progress(1.0, text="Done.")
-            ids = [p["id"] for p in papers]
-            st.session_state["step1_embeddings"] = embeddings
-            st.session_state["step1_embed_ids"] = ids
-        finally:
-            st.session_state["running"] = False
-        _clear_downstream_embeddings()
-        st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
-        st.rerun()
+    if st.button("Generate embeddings", key="run_embed", disabled=_is_running, use_container_width=True):
+        if "step1_papers" not in st.session_state:
+            st.error("No papers loaded. Upload a file in the Paper Input section first.")
+        else:
+            from pipeline.embed import embed_papers
+            papers = [p for p in st.session_state["step1_papers"]
+                      if p.get("title", "").strip() and p.get("abstract", "").strip()]
+            st.session_state["running"] = True
+            prog = st.progress(0, text="Loading SPECTER2 model...")
+            def _cb(cur, tot):
+                prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
+            try:
+                embeddings = embed_papers(papers, progress_callback=_cb)
+                prog.progress(1.0, text="Done.")
+                ids = [p["id"] for p in papers]
+                st.session_state["step1_embeddings"] = embeddings
+                st.session_state["step1_embed_ids"] = ids
+            finally:
+                st.session_state["running"] = False
+            _clear_downstream_embeddings()
+            st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
+            st.rerun()
 
     st.divider()
     st.markdown("**Generate on Colab** (faster, requires a Google account)")
@@ -766,14 +765,13 @@ with st.expander("2. Embeddings", expanded=False):
 # STEP 3 - CREATE MAP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("3. Create Map", expanded=False):
-    if "step1_embeddings" not in st.session_state:
-        st.info("No embeddings in the tool yet. Generate or upload them above.")
-    else:
-        embed_src = st.session_state["step1_embeddings"]
-        papers_src = st.session_state["step1_papers"]
-
-        st.caption("Builds a cosine similarity network - each paper connects to its most similar papers.")
-        if st.button("Build network map", key="run_network", disabled=_is_running, use_container_width=True):
+    st.caption("Builds a cosine similarity network - each paper connects to its most similar papers.")
+    if st.button("Build network map", key="run_network", disabled=_is_running, use_container_width=True):
+        if "step1_embeddings" not in st.session_state:
+            st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
+        else:
+            embed_src = st.session_state["step1_embeddings"]
+            papers_src = st.session_state["step1_papers"]
             from pipeline.network import build_edge_list
             st.session_state["running"] = True
             prog = st.progress(0, text="Building network...")
@@ -808,13 +806,13 @@ with st.expander("3. Create Map", expanded=False):
                 st.session_state["running"] = False
             st.rerun()
 
-        if "vos_json_auto" in st.session_state:
-            st.success(f"Network map ready - {len(st.session_state['step2_edges'])} connections.")
-            vos_url = _vosviewer_url(st.session_state.get("vos_json_url_auto"), max_n_links=0)
-            if vos_url:
-                st.link_button("Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
-            else:
-                st.caption("Download the VOSviewer network file from the Files panel below and open it in VOSviewer Online manually.")
+    if "vos_json_auto" in st.session_state:
+        st.success(f"Network map ready - {len(st.session_state['step2_edges'])} connections.")
+        vos_url = _vosviewer_url(st.session_state.get("vos_json_url_auto"), max_n_links=0)
+        if vos_url:
+            st.link_button("Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
+        else:
+            st.caption("Download the VOSviewer network file from the Files panel below and open it in VOSviewer Online manually.")
 
     st.divider()
     st.markdown("**Coordinate map**")
@@ -822,16 +820,15 @@ with st.expander("3. Create Map", expanded=False):
         "Projects papers into 2D space using UMAP - similar papers end up close together. "
         "Good for seeing the overall semantic landscape."
     )
-    if "step1_embeddings" not in st.session_state:
-        st.info("No embeddings in the tool yet.")
-    else:
-        _adv_embed_src = st.session_state["step1_embeddings"]
-        _adv_papers_src = st.session_state["step1_papers"]
-        n = len(_adv_embed_src)
-        estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
-        st.caption(f"Expected time: {estimate} for {n} papers.")
-        if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
+    if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
+        if "step1_embeddings" not in st.session_state:
+            st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
+        else:
             from pipeline.reduce import umap_reduce
+            _adv_embed_src = st.session_state["step1_embeddings"]
+            _adv_papers_src = st.session_state["step1_papers"]
+            n = len(_adv_embed_src)
+            estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
             viz_embed_ids = (st.session_state.get("step1_embed_ids")
                              or [p["id"] for p in _adv_papers_src])
             st.session_state["running"] = True
@@ -859,13 +856,13 @@ with st.expander("3. Create Map", expanded=False):
                 st.session_state["running"] = False
             st.rerun()
 
-        if "viz_vos_json" in st.session_state:
-            st.success(f"Coordinate map ready - {len(st.session_state['viz_coords'])} papers.")
-            viz_vos_url = _vosviewer_url(st.session_state.get("viz_vos_json_url"))
-            if viz_vos_url:
-                st.link_button("Open in VOSviewer Online", viz_vos_url, type="primary", use_container_width=True)
-            else:
-                st.caption("Download the VOSviewer coordinates file from the Files panel below and open it in VOSviewer Online manually.")
+    if "viz_vos_json" in st.session_state:
+        st.success(f"Coordinate map ready - {len(st.session_state['viz_coords'])} papers.")
+        viz_vos_url = _vosviewer_url(st.session_state.get("viz_vos_json_url"))
+        if viz_vos_url:
+            st.link_button("Open in VOSviewer Online", viz_vos_url, type="primary", use_container_width=True)
+        else:
+            st.caption("Download the VOSviewer coordinates file from the Files panel below and open it in VOSviewer Online manually.")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
