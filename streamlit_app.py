@@ -37,7 +37,8 @@ st.markdown(
     "- **RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote\n"
     "- **BibTeX** (.bib) — exported by Google Scholar, Zotero, and most reference managers\n"
     "- **PubMed** (.txt) — from PubMed: click *Send to* → *File* → Format: *PubMed*\n"
-    "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*"
+    "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*\n"
+    "- **Excel** (.xlsx) — spreadsheet with columns named *title* and *abstract* (and optionally *id*)"
 )
 with st.expander("How to export with abstracts included", expanded=False):
     st.markdown(
@@ -108,7 +109,19 @@ with st.expander("How to export with abstracts included", expanded=False):
         "Papers imported this way will have no abstract and will be skipped at the embedding step. "
         "If your papers are on Google Scholar, the best approach is to import them into Zotero "
         "using the Zotero browser connector (which captures the abstract), "
-        "and then export from Zotero."
+        "and then export from Zotero.\n\n"
+
+        "---\n\n"
+
+        "**Excel** (.xlsx) — use this if your paper list is already in a spreadsheet\n\n"
+        "The file must have a column named **title** and a column named **abstract** "
+        "(column names are not case-sensitive). "
+        "An **id** column is optional — if missing, papers are numbered automatically.\n\n"
+        "1. Open your spreadsheet in Excel.\n"
+        "2. Make sure there is a *title* column and an *abstract* column.\n"
+        "3. Go to **File** → **Save As**, choose format **Excel Workbook (.xlsx)**.\n\n"
+        "If your spreadsheet came from a database export (e.g. Scopus CSV), "
+        "look for a column containing the abstract text and rename it to *abstract* if needed."
     )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -318,6 +331,40 @@ def parse_bibtex_export(text: str) -> list[dict]:
             result.append({"id": key, "title": title, "abstract": abstract})
     return result
 
+def parse_excel_export(data: bytes) -> list[dict]:
+    try:
+        df = pd.read_excel(io.BytesIO(data), sheet_name=0, dtype=str, keep_default_na=False)
+    except Exception as exc:
+        raise ValueError(f"Could not read Excel file: {exc}") from exc
+    df = df.dropna(how="all")
+    col_lower = {c.strip().lower(): c for c in df.columns}
+    def _find(*names):
+        for n in names:
+            if n in col_lower:
+                return col_lower[n]
+        return None
+    title_col    = _find("title", "paper title", "article title")
+    abstract_col = _find("abstract", "summary")
+    id_col       = _find("id", "pmid", "doi", "accession number", "accession", "ut")
+    if title_col is None:
+        raise ValueError(
+            f"No title column found. Columns in file: {list(df.columns)}. "
+            "Add a column named 'title'."
+        )
+    if abstract_col is None:
+        raise ValueError(
+            f"No abstract column found. Columns in file: {list(df.columns)}. "
+            "Add a column named 'abstract'."
+        )
+    result = []
+    for i, row in df.iterrows():
+        title    = row[title_col].strip()
+        abstract = row[abstract_col].strip()
+        id_      = row[id_col].strip() if id_col and row[id_col].strip() else str(i + 1)
+        if title:
+            result.append({"id": id_, "title": title, "abstract": abstract})
+    return result
+
 def _papers_to_csv_bytes(papers: list[dict]) -> bytes:
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
@@ -448,7 +495,7 @@ with st.expander("One click map", expanded=True):
 
     st.file_uploader(
         "Reference export",
-        type=["ris", "bib", "txt", "nbib"],
+        type=["ris", "bib", "txt", "nbib", "xlsx"],
         key="ocm_raw_upload",
         on_change=handle_panel_upload,
         args=("ocm_raw_upload", "raw"),
@@ -463,14 +510,15 @@ with st.expander("One click map", expanded=True):
         _ocm_cache_key = ("raw_parsed", _ocm_fname, len(_ocm_bytes))
         if st.session_state.get("_raw_parsed_key") != _ocm_cache_key:
             try:
-                _ocm_text = _ocm_bytes.decode("utf-8", errors="replace")
                 _ocm_ext = Path(_ocm_fname).suffix.lower()
-                if _ocm_ext == ".bib":
-                    _ocm_parsed = parse_bibtex_export(_ocm_text)
+                if _ocm_ext == ".xlsx":
+                    _ocm_parsed = parse_excel_export(_ocm_bytes)
+                elif _ocm_ext == ".bib":
+                    _ocm_parsed = parse_bibtex_export(_ocm_bytes.decode("utf-8", errors="replace"))
                 elif _ocm_ext == ".ris":
-                    _ocm_parsed = parse_ris_export(_ocm_text)
+                    _ocm_parsed = parse_ris_export(_ocm_bytes.decode("utf-8", errors="replace"))
                 else:
-                    _ocm_parsed = parse_pubmed_export(_ocm_text)
+                    _ocm_parsed = parse_pubmed_export(_ocm_bytes.decode("utf-8", errors="replace"))
                 st.session_state["_raw_parsed"] = _ocm_parsed
                 st.session_state["_raw_parsed_key"] = _ocm_cache_key
             except Exception as _ocm_exc:
@@ -572,7 +620,7 @@ with st.expander("1. Paper Input", expanded=False):
 
     st.file_uploader(
         "Reference export",
-        type=["ris", "bib", "txt", "nbib"],
+        type=["ris", "bib", "txt", "nbib", "xlsx"],
         key="s1_raw_upload",
         on_change=handle_panel_upload,
         args=("s1_raw_upload", "raw"),
@@ -588,14 +636,15 @@ with st.expander("1. Paper Input", expanded=False):
         cache_key = ("raw_parsed", raw_fname, len(raw_bytes))
         if st.session_state.get("_raw_parsed_key") != cache_key:
             try:
-                text = raw_bytes.decode("utf-8", errors="replace")
                 ext = Path(raw_fname).suffix.lower()
-                if ext == ".bib":
-                    parsed = parse_bibtex_export(text)
+                if ext == ".xlsx":
+                    parsed = parse_excel_export(raw_bytes)
+                elif ext == ".bib":
+                    parsed = parse_bibtex_export(raw_bytes.decode("utf-8", errors="replace"))
                 elif ext == ".ris":
-                    parsed = parse_ris_export(text)
+                    parsed = parse_ris_export(raw_bytes.decode("utf-8", errors="replace"))
                 else:
-                    parsed = parse_pubmed_export(text)
+                    parsed = parse_pubmed_export(raw_bytes.decode("utf-8", errors="replace"))
                 st.session_state["_raw_parsed"] = parsed
                 st.session_state["_raw_parsed_key"] = cache_key
             except Exception as e:
@@ -623,7 +672,7 @@ with st.expander("1. Paper Input", expanded=False):
             st.caption("Alternative upload for RIS, BibTeX, or PubMed files.")
             st.file_uploader(
                 "Reference export (advanced)",
-                type=["ris", "bib", "txt", "nbib"],
+                type=["ris", "bib", "txt", "nbib", "xlsx"],
                 key="s1_raw_upload_adv",
                 on_change=handle_panel_upload,
                 args=("s1_raw_upload_adv", "raw"),
@@ -891,7 +940,7 @@ with st.expander("Files tracker", expanded=False):
         raise ValueError(f"Unknown file slot: {slot_key}")
 
     _FILE_SLOTS = [
-        ("raw",         "Reference export",          "dl_panel_raw",       "ul_panel_raw",       ["txt", "nbib", "ris", "bib"]),
+        ("raw",         "Reference export",          "dl_panel_raw",       "ul_panel_raw",       ["txt", "nbib", "ris", "bib", "xlsx"]),
         ("papers",      "Clean paper list",          "dl_panel_papers",    "ul_panel_papers",    ["csv"]),
         ("embeddings",  "Embeddings",                "dl_panel_embed",     "ul_panel_embed",     ["csv"]),
         ("edges",       "Paper network",             "dl_panel_edges",     "ul_panel_edges",     ["csv"]),
