@@ -357,16 +357,16 @@ def _vosviewer_url(json_url: str | None, **params) -> str | None:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ONE CLICK MAP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if "_demo_bytes" not in st.session_state:
+    st.session_state["_demo_bytes"] = (Path(__file__).parent / "sample_papers.ris").read_bytes()
+st.download_button(
+    "No file yet? Download 50 sample papers to try.",
+    st.session_state["_demo_bytes"],
+    "sample_papers.ris", mime="text/plain", key="dl_demo",
+)
+
 with st.expander("One click map", expanded=True):
     st.caption("Upload your papers and get a VOSviewer map in one click.")
-
-    if "_demo_bytes" not in st.session_state:
-        st.session_state["_demo_bytes"] = (Path(__file__).parent / "sample_papers.ris").read_bytes()
-    st.download_button(
-        "No file yet? Download 50 sample papers to try.",
-        st.session_state["_demo_bytes"],
-        "sample_papers.ris", mime="text/plain", key="dl_demo_ocm",
-    )
 
     st.file_uploader(
         "Reference export",
@@ -491,14 +491,6 @@ with st.expander("1. Paper Input", expanded=False):
         "Upload a reference export file. "
         "Supported formats: RIS (.ris), BibTeX (.bib), PubMed (.txt, .nbib)."
     )
-
-    with st.expander("No file yet? Download 50 sample papers to try the tool.", expanded=False):
-        if "_demo_bytes" not in st.session_state:
-            st.session_state["_demo_bytes"] = (Path(__file__).parent / "sample_papers.ris").read_bytes()
-        st.download_button(
-            "Download sample papers (RIS)", st.session_state["_demo_bytes"],
-            "sample_papers.ris", mime="text/plain", key="dl_demo",
-        )
 
     st.file_uploader(
         "Reference export",
