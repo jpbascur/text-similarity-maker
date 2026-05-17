@@ -32,6 +32,13 @@ st.markdown(
     "Use the One click map for the simplest experience, "
     "or the step-by-step sections below for more control."
 )
+st.markdown(
+    "**Supported input formats:**\n\n"
+    "- **RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote\n"
+    "- **BibTeX** (.bib) — exported by Google Scholar, Zotero, and most reference managers\n"
+    "- **PubMed** (.txt, .nbib) — to export from PubMed: search your papers, "
+    "click *Send to*, choose *File*, and set Format to *PubMed*"
+)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
