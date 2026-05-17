@@ -39,6 +39,77 @@ st.markdown(
     "- **PubMed** (.txt) — from PubMed: click *Send to* → *File* → Format: *PubMed*\n"
     "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*"
 )
+with st.expander("How to export with abstracts included", expanded=False):
+    st.markdown(
+        "This tool needs title and abstract for each paper. "
+        "Papers without an abstract are skipped at the embedding step. "
+        "Follow the instructions below for your source to make sure abstracts are included.\n\n"
+
+        "---\n\n"
+
+        "**PubMed** — abstracts always included\n\n"
+        "For a `.txt` file: search on PubMed, click **Send to** → **File**, "
+        "set Format to **PubMed**, click **Create file**.\n\n"
+        "For a `.nbib` file: same search, click **Send to** → **Citation Manager**, "
+        "click **Create file**.\n\n"
+
+        "---\n\n"
+
+        "**Scopus** — you must manually select the abstract field\n\n"
+        "1. Run your search on Scopus and select the papers you want.\n"
+        "2. Click **Export**.\n"
+        "3. Choose **RIS format**.\n"
+        "4. Under *Information to export*, check **Abstract**. "
+        "It is not selected by default.\n"
+        "5. Click **Export**. Downloads as `.ris`.\n\n"
+
+        "---\n\n"
+
+        "**Web of Science** — use Full Record to include abstracts\n\n"
+        "1. Run your search and select the papers you want.\n"
+        "2. Click **Export** → **RIS File**.\n"
+        "3. Set *Record Content* to **Full Record**. "
+        "The default Author, Title, Source option does not include abstracts.\n"
+        "4. Click **Export**. Downloads as `.ris`.\n\n"
+
+        "---\n\n"
+
+        "**Zotero** — abstracts exported if stored in your library\n\n"
+        "1. Select the papers in your Zotero library.\n"
+        "2. Right-click → **Export Items**, or go to **File** → **Export Items**.\n"
+        "3. Choose **RIS** or **BibTeX** as format.\n"
+        "4. Click **OK**.\n\n"
+        "Abstracts are included automatically if Zotero has them. "
+        "When you add papers using the Zotero browser connector, abstracts are usually captured. "
+        "If a paper was added manually or imported without an abstract, it will not have one.\n\n"
+
+        "---\n\n"
+
+        "**Mendeley** — abstracts exported if stored in your library\n\n"
+        "1. Select the papers in Mendeley.\n"
+        "2. Go to **File** → **Export**.\n"
+        "3. Choose **RIS** format.\n\n"
+        "Same caveat as Zotero: abstracts are only exported if they are stored in your Mendeley library.\n\n"
+
+        "---\n\n"
+
+        "**EndNote** — requires an output style that includes abstracts\n\n"
+        "1. Select the references in EndNote.\n"
+        "2. Go to **File** → **Export**.\n"
+        "3. Set *Output style* to **RefMan (RIS) Export**. "
+        "This style includes the abstract field. Other styles may not.\n"
+        "4. Save as a `.ris` file.\n\n"
+
+        "---\n\n"
+
+        "**Google Scholar** — abstracts are NOT included in the export\n\n"
+        "Google Scholar's BibTeX export only contains basic metadata "
+        "(title, authors, year, venue) and does not include abstracts. "
+        "Papers imported this way will have no abstract and will be skipped at the embedding step. "
+        "If your papers are on Google Scholar, the best approach is to import them into Zotero "
+        "using the Zotero browser connector (which captures the abstract), "
+        "and then export from Zotero."
+    )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
