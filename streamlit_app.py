@@ -601,7 +601,7 @@ with st.expander("1. Paper Input", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("2. Embeddings", expanded=False):
     if "step1_papers" not in st.session_state:
-        st.info("Complete step 1 first.")
+        st.info("No papers in the tool yet. Upload a file above or use the One click map.")
     else:
         st.caption("Runs on this server using SPECTER2. Papers without title or abstract are skipped.")
         if _mem_caption:
@@ -678,7 +678,7 @@ with st.expander("2. Embeddings", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("3. Create Map", expanded=False):
     if "step1_embeddings" not in st.session_state:
-        st.info("Complete step 2 first.")
+        st.info("No embeddings in the tool yet. Generate them above or use the One click map.")
     else:
         embed_src = st.session_state["step1_embeddings"]
         papers_src = st.session_state["step1_papers"]
@@ -734,7 +734,7 @@ with st.expander("3. Create Map", expanded=False):
             "Good for seeing the overall semantic landscape."
         )
         if "step1_embeddings" not in st.session_state:
-            st.info("Upload embeddings first (complete step 2 or use its alternative path).")
+            st.info("No embeddings in the tool yet.")
         else:
             _adv_embed_src = st.session_state["step1_embeddings"]
             _adv_papers_src = st.session_state["step1_papers"]
