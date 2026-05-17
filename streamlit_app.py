@@ -601,7 +601,7 @@ with st.expander("1. Paper Input", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("2. Embeddings", expanded=False):
     if "step1_papers" not in st.session_state:
-        st.info("No papers in the tool yet. Upload a file above or use the One click map.")
+        st.info("No papers in the tool yet. Upload a file above.")
     else:
         st.caption("Runs on this server using SPECTER2. Papers without title or abstract are skipped.")
         if _mem_caption:
@@ -678,7 +678,7 @@ with st.expander("2. Embeddings", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("3. Create Map", expanded=False):
     if "step1_embeddings" not in st.session_state:
-        st.info("No embeddings in the tool yet. Generate them above or use the One click map.")
+        st.info("No embeddings in the tool yet. Generate them above.")
     else:
         embed_src = st.session_state["step1_embeddings"]
         papers_src = st.session_state["step1_papers"]
@@ -782,7 +782,7 @@ with st.expander("3. Create Map", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FILES PANEL (advanced)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-with st.expander("Files", expanded=False):
+with st.expander("Files tracker", expanded=False):
     st.caption("All files in your current session. Upload or download any file individually.")
 
     def _file_slot_state(slot_key: str) -> tuple[bool, str, bytes, str, str]:
