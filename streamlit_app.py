@@ -1,6 +1,26 @@
 """
 TSM - Text Similarity Maker
 Streamlit pipeline for building VOSviewer-compatible paper networks.
+
+Architecture principles
+-----------------------
+1. Functions receive file bytes, return data structures or file bytes.
+   Pipeline functions never read from st.session_state; every input is an
+   explicit argument.  This means swapping the bytes changes the output
+   automatically — no hidden state can drift out of sync with the UI.
+
+2. Session state stores file bytes under ``_dl_*`` keys plus a small set of
+   computed in-memory objects (numpy arrays, edge lists) needed for display.
+   The bytes are the source of truth; the in-memory objects are caches only.
+
+3. Hyperparameters (top_k, min_similarity, n_neighbors, clustering, …) are
+   explicit function arguments.  OCM hard-codes them; the Step-3 UI reads
+   them from widgets and passes them explicitly.  No function reads a widget
+   value internally.
+
+4. OCM is the same pipeline with hard-coded arguments, not a separate
+   implementation.  If you add a pipeline function, OCM calls it too —
+   just pass its fixed value instead of a widget value.
 """
 import csv
 import hashlib
@@ -15,6 +35,27 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# ── memory (read before any st calls so variables are available anywhere) ─────
+def _read_cgroup_mem():
+    try:
+        limit = int(Path("/sys/fs/cgroup/memory.max").read_text().strip())
+        usage = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
+        return usage, limit
+    except Exception:
+        pass
+    limit = int(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes").read_text().strip())
+    usage = int(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes").read_text().strip())
+    return usage, limit
+
+try:
+    _mem_used, _mem_limit = _read_cgroup_mem()
+    _mem_used_gb  = _mem_used  / 1024**3
+    _mem_total_gb = _mem_limit / 1024**3
+    _mem_free_gb  = (_mem_limit - _mem_used) / 1024**3
+    _mem_pct      = _mem_used / _mem_limit * 100
+except Exception:
+    _mem_used_gb = _mem_total_gb = _mem_free_gb = _mem_pct = None
+
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="TSM Text Similarity Maker",
@@ -27,6 +68,14 @@ st.caption(
     "Problems? Contact [juanpablobascurcifuentes@gmail.com](mailto:juanpablobascurcifuentes@gmail.com) - "
     "Source: [github.com/jpbascur/text-similarity-maker](https://github.com/jpbascur/text-similarity-maker)"
 )
+if _mem_pct is not None:
+    with st.expander("Server memory", expanded=False):
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Used", f"{_mem_used_gb:.1f} GB")
+        col_m2.metric("Free", f"{_mem_free_gb:.1f} GB")
+        col_m3.metric("Total", f"{_mem_total_gb:.1f} GB")
+        st.progress(_mem_pct / 100)
+        st.caption("Memory is shared across all users. If memory is low, please wait for it to be released by another user.")
 st.markdown(
     "Upload your papers and get a text similarity science map. "
     "Use the One click map for the simplest experience, "
@@ -36,8 +85,7 @@ st.markdown(
     "**Supported input formats:**\n\n"
     "- **RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote\n"
     "- **BibTeX** (.bib) — exported by Google Scholar, Zotero, and most reference managers\n"
-    "- **PubMed** (.txt) — from PubMed: click *Send to* → *File* → Format: *PubMed*\n"
-    "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*\n"
+    "- **PubMed** (.txt, .nbib) — from the PubMed website\n"
     "- **Excel** (.xlsx) — for manually built spreadsheets; must have columns named *id*, *title*, and *abstract*"
 )
 with st.expander("How to export with abstracts included", expanded=False):
@@ -197,6 +245,14 @@ def uploaded_file_bytes(upload_key: str, file_obj) -> tuple[bytes, str] | None:
     return data, signature
 
 def handle_panel_upload(upload_key: str, slot_key: str):
+    """Streamlit on_change callback — validate an uploaded file and store its bytes.
+
+    Reads the uploaded file once per unique (name, size, content) combination,
+    validates it by calling the appropriate parser, stores raw bytes under the
+    canonical ``_dl_*`` key, and clears any stale downstream state.  On error
+    the bytes are not stored and the error message is written to session state
+    so the UI can display it without raising.
+    """
     file_obj = st.session_state.get(upload_key)
     if file_obj is None:
         return
@@ -206,14 +262,16 @@ def handle_panel_upload(upload_key: str, slot_key: str):
     raw, _signature = uploaded
     error_key = f"_upload_error_{upload_key}"
     try:
-        if slot_key == "raw":
+        if slot_key == "ocm_raw":
+            st.session_state["ocm_raw_file"] = (file_obj.name, raw)
+            st.session_state.pop("ocm_raw_parsed", None)
+            st.session_state.pop("ocm_raw_parsed_key", None)
+        elif slot_key == "raw":
             st.session_state["raw_file"] = (file_obj.name, raw)
             st.session_state.pop("_raw_parsed", None)
             st.session_state.pop("_raw_parsed_key", None)
         elif slot_key == "papers":
-            parsed = parse_papers_csv(raw)
-            st.session_state["step1_papers"] = parsed
-            st.session_state["s1_file"] = (file_obj.name, raw)
+            parse_papers_csv(raw)  # validate
             _clear_downstream_papers()
             st.session_state["_dl_papers"] = raw
         elif slot_key == "embeddings":
@@ -226,18 +284,29 @@ def handle_panel_upload(upload_key: str, slot_key: str):
             st.session_state["step2_edges"] = parse_edge_csv(raw)
             _clear_downstream_edges()
             st.session_state["_dl_edges"] = raw
+            if "_dl_papers" in st.session_state:
+                _clustering_val = "none" if st.session_state.get("net_clustering", "").startswith("None") else "auto"
+                sid = st.session_state["session_id"]
+                vos_data = _build_vos_network_json(st.session_state["_dl_papers"], raw, clustering=_clustering_val)
+                st.session_state["vos_json"]     = json.dumps(vos_data, indent=2)
+                st.session_state["vos_json_url"] = _write_static_json(f"{sid}_network.json", vos_data)
         elif slot_key == "network_vos":
             json_str = raw.decode("utf-8")
             data = json.loads(json_str)
             sid = st.session_state["session_id"]
-            st.session_state["vos_json_auto"] = json_str
-            st.session_state["vos_json_fixed"] = json_str
-            st.session_state["vos_json_url_auto"] = _write_static_json(f"{sid}_network_auto.json", data)
-            st.session_state["vos_json_url_fixed"] = _write_static_json(f"{sid}_network_fixed.json", data)
+            st.session_state["vos_json"] = json_str
+            st.session_state["vos_json_url"] = _write_static_json(f"{sid}_network.json", data)
         elif slot_key == "coords":
-            st.session_state["viz_ids"], st.session_state["viz_coords"] = parse_coords_csv(raw)
+            ids, coords = parse_coords_csv(raw)
+            st.session_state["viz_ids"]    = ids
+            st.session_state["viz_coords"] = coords
             _clear_downstream_coords()
             st.session_state["_dl_coords"] = raw
+            if "_dl_papers" in st.session_state:
+                sid = st.session_state["session_id"]
+                vos_data = _build_vos_coords_json(st.session_state["_dl_papers"], raw)
+                st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
+                st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
         elif slot_key == "coords_vos":
             json_str = raw.decode("utf-8")
             data = json.loads(json_str)
@@ -360,6 +429,26 @@ def parse_excel_export(data: bytes) -> list[dict]:
             result.append({"id": id_, "title": title, "abstract": abstract})
     return result
 
+def parse_reference_file(data: bytes, filename: str, ignore_incomplete: bool = False) -> list[dict]:
+    """Route *data* to the correct format parser and optionally drop incomplete papers.
+
+    Centralises format dispatch + filtering so every call site (Step-1 UI,
+    OCM button) uses identical logic.  OCM always passes ``ignore_incomplete=False``
+    — it embeds everything and lets the user own the results.
+    """
+    ext = Path(filename).suffix.lower()
+    if ext == ".xlsx":
+        papers = parse_excel_export(data)
+    elif ext == ".bib":
+        papers = parse_bibtex_export(data.decode("utf-8", errors="replace"))
+    elif ext == ".ris":
+        papers = parse_ris_export(data.decode("utf-8", errors="replace"))
+    else:
+        papers = parse_pubmed_export(data.decode("utf-8", errors="replace"))
+    if ignore_incomplete:
+        papers = [p for p in papers if p.get("title", "").strip() and p.get("abstract", "").strip()]
+    return papers
+
 def _papers_to_csv_bytes(papers: list[dict]) -> bytes:
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
@@ -383,24 +472,20 @@ def _coords_to_csv_bytes(ids: list, coords: np.ndarray) -> bytes:
 
 def _clear_downstream_papers():
     for key in ["step1_embeddings", "step1_embed_ids", "step2_edges",
-                "viz_coords", "viz_ids", "vos_json_auto", "vos_json_fixed",
-                "vos_json_url_auto", "vos_json_url_fixed",
+                "viz_coords", "viz_ids", "vos_json", "vos_json_url",
                 "viz_vos_json", "viz_vos_json_url",
                 "_dl_embeddings", "_dl_edges", "_dl_coords"]:
         st.session_state.pop(key, None)
 
 def _clear_downstream_embeddings():
     for key in ["step2_edges", "viz_coords", "viz_ids",
-                "vos_json_auto", "vos_json_fixed",
-                "vos_json_url_auto", "vos_json_url_fixed",
+                "vos_json", "vos_json_url",
                 "viz_vos_json", "viz_vos_json_url",
                 "_dl_embeddings", "_dl_edges", "_dl_coords"]:
         st.session_state.pop(key, None)
 
 def _clear_downstream_edges():
-    for key in ["vos_json_auto", "vos_json_fixed",
-                "vos_json_url_auto", "vos_json_url_fixed",
-                "_dl_edges"]:
+    for key in ["vos_json", "vos_json_url", "_dl_edges"]:
         st.session_state.pop(key, None)
 
 def _clear_downstream_coords():
@@ -417,30 +502,6 @@ _is_running = st.session_state["running"]
 if _is_running:
     st.warning("A job is already running in this session. Please wait for it to finish.")
 
-try:
-    def _read_cgroup_mem():
-        try:
-            limit = int(Path("/sys/fs/cgroup/memory.max").read_text().strip())
-            usage = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
-            return usage, limit
-        except Exception:
-            pass
-        limit = int(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes").read_text().strip())
-        usage = int(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes").read_text().strip())
-        return usage, limit
-    _mem_used, _mem_limit = _read_cgroup_mem()
-    _mem_used_gb  = _mem_used  / 1024**3
-    _mem_total_gb = _mem_limit / 1024**3
-    _mem_free_gb  = (_mem_limit - _mem_used) / 1024**3
-    _mem_pct      = _mem_used / _mem_limit * 100
-    _mem_caption  = (
-        f"Container memory: {_mem_used_gb:.1f} GB used / {_mem_total_gb:.1f} GB total - "
-        f"{_mem_free_gb:.1f} GB free ({100 - _mem_pct:.0f}% available). "
-        "This tool has limited memory shared across all users. "
-        "If memory is low, please wait for it to be released by another user."
-    )
-except Exception:
-    _mem_caption = None
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
@@ -473,6 +534,59 @@ def _vosviewer_url(json_url: str | None, **params) -> str | None:
     query = urlencode({"json": json_url, **params})
     return f"https://app.vosviewer.com/?{query}"
 
+def _build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str) -> dict:
+    """Build a VOSviewer network JSON from file bytes.
+
+    Args:
+        papers_csv: Clean paper list CSV bytes (columns: id, title, abstract).
+        edges_csv:  Network CSV bytes (columns: source, target, weight).
+        clustering: ``"auto"`` omits the cluster field so VOSviewer runs its
+                    own algorithm; ``"none"`` pins every item to cluster 1.
+
+    Returns a ``{"network": {"items": [...], "links": [...]}}`` dict ready for
+    ``json.dumps``.  Always takes bytes so the caller controls which version of
+    the files is used.
+    """
+    papers = parse_papers_csv(papers_csv)
+    edges = parse_edge_csv(edges_csv)
+    items = [
+        {"id": str(idx + 1), "label": p.get("title", p.get("id", str(idx + 1))),
+         "description": str(p.get("id", ""))}
+        for idx, p in enumerate(papers)
+    ]
+    if clustering == "none":
+        items = [{**it, "cluster": 1} for it in items]
+    links = [
+        {"source_id": str(i + 1), "target_id": str(j + 1), "strength": round(w, 6)}
+        for i, j, w in edges
+    ]
+    return {"network": {"items": items, "links": links}}
+
+def _build_vos_coords_json(papers_csv: bytes, coords_csv: bytes) -> dict:
+    """Build a VOSviewer coordinate JSON from file bytes.
+
+    Args:
+        papers_csv: Clean paper list CSV bytes (columns: id, title, abstract).
+        coords_csv: Coordinate CSV bytes (columns: id, x, y).
+
+    Returns a ``{"network": {"items": [...], "links": []}}`` dict where every
+    item carries ``x``, ``y``, and ``cluster: 1`` (coordinate maps have no
+    links and no clustering).  Always takes bytes — same rationale as
+    ``_build_vos_network_json``.
+    """
+    papers = parse_papers_csv(papers_csv)
+    ids, coords = parse_coords_csv(coords_csv)
+    coord_lookup = {pid: (float(x), float(y)) for pid, (x, y) in zip(ids, coords)}
+    items = []
+    for idx, paper in enumerate(papers):
+        pid = str(paper.get("id", idx + 1))
+        x, y = coord_lookup.get(pid, (0.0, 0.0))
+        items.append({
+            "id": str(idx + 1), "label": paper.get("title", pid),
+            "description": pid, "x": round(x, 6), "y": round(y, 6), "cluster": 1,
+        })
+    return {"network": {"items": items, "links": []}}
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ONE CLICK MAP
@@ -493,36 +607,28 @@ with st.expander("One click map", expanded=True):
         type=["ris", "bib", "txt", "nbib", "xlsx"],
         key="ocm_raw_upload",
         on_change=handle_panel_upload,
-        args=("ocm_raw_upload", "raw"),
+        args=("ocm_raw_upload", "ocm_raw"),
         accept_multiple_files=False,
         label_visibility="collapsed",
     )
     if st.session_state.get("_upload_error_ocm_raw_upload"):
         st.error(st.session_state["_upload_error_ocm_raw_upload"])
 
-    if "raw_file" in st.session_state:
-        _ocm_fname, _ocm_bytes = st.session_state["raw_file"]
-        _ocm_cache_key = ("raw_parsed", _ocm_fname, len(_ocm_bytes))
-        if st.session_state.get("_raw_parsed_key") != _ocm_cache_key:
+    if "ocm_raw_file" in st.session_state:
+        _ocm_fname, _ocm_bytes = st.session_state["ocm_raw_file"]
+        _ocm_cache_key = ("ocm_raw_parsed", _ocm_fname, len(_ocm_bytes))
+        if st.session_state.get("ocm_raw_parsed_key") != _ocm_cache_key:
             try:
-                _ocm_ext = Path(_ocm_fname).suffix.lower()
-                if _ocm_ext == ".xlsx":
-                    _ocm_parsed = parse_excel_export(_ocm_bytes)
-                elif _ocm_ext == ".bib":
-                    _ocm_parsed = parse_bibtex_export(_ocm_bytes.decode("utf-8", errors="replace"))
-                elif _ocm_ext == ".ris":
-                    _ocm_parsed = parse_ris_export(_ocm_bytes.decode("utf-8", errors="replace"))
-                else:
-                    _ocm_parsed = parse_pubmed_export(_ocm_bytes.decode("utf-8", errors="replace"))
-                st.session_state["_raw_parsed"] = _ocm_parsed
-                st.session_state["_raw_parsed_key"] = _ocm_cache_key
+                _ocm_parsed = parse_reference_file(_ocm_bytes, _ocm_fname, ignore_incomplete=False)
+                st.session_state["ocm_raw_parsed"] = _ocm_parsed
+                st.session_state["ocm_raw_parsed_key"] = _ocm_cache_key
             except Exception as _ocm_exc:
                 st.error(f"Could not parse file: {_ocm_exc}")
-                st.session_state.pop("_raw_parsed", None)
-                st.session_state.pop("_raw_parsed_key", None)
+                st.session_state.pop("ocm_raw_parsed", None)
+                st.session_state.pop("ocm_raw_parsed_key", None)
 
-        if "_raw_parsed" in st.session_state:
-            _ocm_refs = st.session_state["_raw_parsed"]
+        if "ocm_raw_parsed" in st.session_state:
+            _ocm_refs = st.session_state["ocm_raw_parsed"]
             _ocm_n = len(_ocm_refs)
             _ocm_n_abs = sum(1 for p in _ocm_refs if p["abstract"])
             st.caption(f"{_ocm_n} papers found - {_ocm_n_abs} with abstracts, {_ocm_n - _ocm_n_abs} without.")
@@ -532,27 +638,22 @@ with st.expander("One click map", expanded=True):
             ):
                 from pipeline.embed import embed_papers
                 from pipeline.network import build_edge_list
-                _ocm_papers = [
-                    p for p in _ocm_refs
-                    if p.get("title", "").strip() and p.get("abstract", "").strip()
-                ]
+                _ocm_papers = parse_reference_file(_ocm_bytes, _ocm_fname, ignore_incomplete=False)
                 if not _ocm_papers:
                     st.error("No papers with both title and abstract found.")
                 else:
                     st.session_state["running"] = True
                     try:
                         _ocm_dl = _papers_to_csv_bytes(_ocm_papers)
-                        st.session_state["step1_papers"] = _ocm_papers
-                        st.session_state["s1_file"] = ("papers.csv", _ocm_dl)
                         _clear_downstream_papers()
                         st.session_state["_dl_papers"] = _ocm_dl
 
                         _ocm_prog = st.progress(0, text="Loading SPECTER2 model...")
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
-                        _ocm_emb = embed_papers(_ocm_papers, progress_callback=_ocm_cb)
+                        _ocm_emb = embed_papers(parse_papers_csv(_ocm_dl), progress_callback=_ocm_cb)
                         _ocm_prog.progress(1.0, text="Embeddings done.")
-                        _ocm_ids = [p["id"] for p in _ocm_papers]
+                        _ocm_ids = [p["id"] for p in parse_papers_csv(_ocm_dl)]
                         _clear_downstream_embeddings()
                         st.session_state["step1_embeddings"] = _ocm_emb
                         st.session_state["step1_embed_ids"] = _ocm_ids
@@ -568,36 +669,25 @@ with st.expander("One click map", expanded=True):
                         _ocm_prog2.progress(1.0, text="Network done.")
                         _clear_downstream_edges()
                         st.session_state["step2_edges"] = _ocm_edges
-                        st.session_state["_dl_edges"] = _edges_to_csv_bytes(_ocm_edges)
+                        _ocm_edges_csv = _edges_to_csv_bytes(_ocm_edges)
+                        st.session_state["_dl_edges"] = _ocm_edges_csv
 
-                        _ocm_items = [
-                            {"id": str(idx + 1), "label": p.get("title", p.get("id", str(idx + 1))),
-                             "description": str(p.get("id", ""))}
-                            for idx, p in enumerate(_ocm_papers)
-                        ]
-                        _ocm_links = [
-                            {"source_id": str(i + 1), "target_id": str(j + 1), "strength": round(w, 6)}
-                            for i, j, w in _ocm_edges
-                        ]
                         _ocm_sid = st.session_state["session_id"]
-                        _ocm_vos_auto  = {"network": {"items": _ocm_items, "links": _ocm_links}}
-                        _ocm_vos_fixed = {"network": {"items": [{**_it, "cluster": 1} for _it in _ocm_items], "links": _ocm_links}}
-                        st.session_state["vos_json_auto"]      = json.dumps(_ocm_vos_auto,  indent=2)
-                        st.session_state["vos_json_fixed"]     = json.dumps(_ocm_vos_fixed, indent=2)
-                        st.session_state["vos_json_url_auto"]  = _write_static_json(f"{_ocm_sid}_network_auto.json",  _ocm_vos_auto)
-                        st.session_state["vos_json_url_fixed"] = _write_static_json(f"{_ocm_sid}_network_fixed.json", _ocm_vos_fixed)
+                        _ocm_vos = _build_vos_network_json(_ocm_dl, _ocm_edges_csv, clustering="auto")
+                        st.session_state["vos_json"]     = json.dumps(_ocm_vos, indent=2)
+                        st.session_state["vos_json_url"] = _write_static_json(f"{_ocm_sid}_network.json", _ocm_vos)
                     except Exception as _ocm_err:
                         st.error(f"Error creating map: {_ocm_err}")
                     finally:
                         st.session_state["running"] = False
                     st.rerun()
 
-    if "vos_json_auto" in st.session_state:
+    if "vos_json" in st.session_state:
         st.success(
-            f"Map ready - {len(st.session_state['step1_papers'])} papers, "
+            f"Map ready - {len(parse_papers_csv(st.session_state['_dl_papers']))} papers, "
             f"{len(st.session_state['step2_edges'])} connections."
         )
-        _ocm_vos_url = _vosviewer_url(st.session_state.get("vos_json_url_auto"), max_n_links=0)
+        _ocm_vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
         if _ocm_vos_url:
             st.link_button("Open in VOSviewer Online", _ocm_vos_url, type="primary", use_container_width=True)
         else:
@@ -631,15 +721,7 @@ with st.expander("1. Paper Input", expanded=False):
         cache_key = ("raw_parsed", raw_fname, len(raw_bytes))
         if st.session_state.get("_raw_parsed_key") != cache_key:
             try:
-                ext = Path(raw_fname).suffix.lower()
-                if ext == ".xlsx":
-                    parsed = parse_excel_export(raw_bytes)
-                elif ext == ".bib":
-                    parsed = parse_bibtex_export(raw_bytes.decode("utf-8", errors="replace"))
-                elif ext == ".ris":
-                    parsed = parse_ris_export(raw_bytes.decode("utf-8", errors="replace"))
-                else:
-                    parsed = parse_pubmed_export(raw_bytes.decode("utf-8", errors="replace"))
+                parsed = parse_reference_file(raw_bytes, raw_fname, ignore_incomplete=False)
                 st.session_state["_raw_parsed"] = parsed
                 st.session_state["_raw_parsed_key"] = cache_key
             except Exception as e:
@@ -653,13 +735,8 @@ with st.expander("1. Paper Input", expanded=False):
             n_abstract = sum(1 for p in papers_ref if p["abstract"])
             st.caption(f"{n_total} papers found - {n_abstract} with abstracts, {n_total - n_abstract} without.")
             if n_total > 0 and st.button("Use these papers", key="load_ref", type="primary"):
-                papers_to_use = papers_ref
-                if ignore:
-                    papers_to_use = [p for p in papers_ref
-                                     if p.get("title", "").strip() and p.get("abstract", "").strip()]
+                papers_to_use = parse_reference_file(raw_bytes, raw_fname, ignore_incomplete=ignore)
                 _dl = _papers_to_csv_bytes(papers_to_use)
-                st.session_state["step1_papers"] = papers_to_use
-                st.session_state["s1_file"] = ("papers.csv", _dl)
                 _clear_downstream_papers()
                 st.session_state["_dl_papers"] = _dl
                 st.rerun()
@@ -679,82 +756,80 @@ with st.expander("1. Paper Input", expanded=False):
     if st.session_state.get("_upload_error_ul_adv_papers"):
         st.error(st.session_state["_upload_error_ul_adv_papers"])
 
-    if "step1_papers" in st.session_state:
-        st.success(f"{len(st.session_state['step1_papers'])} papers ready.")
+    if "_dl_papers" in st.session_state:
+        st.success(f"{len(parse_papers_csv(st.session_state['_dl_papers']))} papers ready.")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STEP 2 - EMBEDDINGS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("2. Embeddings", expanded=False):
-    st.markdown("**Generate on this server**")
-    st.caption("Runs using SPECTER2. Papers without title or abstract are skipped.")
-    if _mem_caption:
-        st.caption(_mem_caption)
-    if st.button("Generate embeddings", key="run_embed", disabled=_is_running, use_container_width=True):
-        if "step1_papers" not in st.session_state:
-            st.error("No papers loaded. Upload a file in the Paper Input section first.")
-        else:
-            from pipeline.embed import embed_papers
-            papers = [p for p in st.session_state["step1_papers"]
-                      if p.get("title", "").strip() and p.get("abstract", "").strip()]
-            st.session_state["running"] = True
-            prog = st.progress(0, text="Loading SPECTER2 model...")
-            def _cb(cur, tot):
-                prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
-            try:
-                embeddings = embed_papers(papers, progress_callback=_cb)
-                prog.progress(1.0, text="Done.")
-                ids = [p["id"] for p in papers]
-                st.session_state["step1_embeddings"] = embeddings
-                st.session_state["step1_embed_ids"] = ids
-            finally:
-                st.session_state["running"] = False
-            _clear_downstream_embeddings()
-            st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
-            st.rerun()
+    col_srv, col_colab = st.columns(2)
 
-    st.divider()
-    st.markdown("**Generate on Colab** (faster, requires a Google account)")
-    st.caption("Runs on a free GPU. You need to move files manually.")
-    _papers_dl_bytes = st.session_state.get("_dl_papers", b"")
-    st.download_button(
-        "1. Download papers CSV", _papers_dl_bytes, "papers.csv",
-        mime="text/csv", key="dl_papers_for_colab",
-        disabled=not bool(_papers_dl_bytes), use_container_width=True,
-    )
-    st.link_button(
-        "2. Open Colab notebook",
-        "https://colab.research.google.com/github/jpbascur/snipets/blob/main/generate_embeddings.ipynb",
-        use_container_width=True,
-    )
-    st.caption("3. Upload the embeddings file you get from Colab:")
-    st.file_uploader(
-        "Embeddings CSV from Colab",
-        type=["csv"],
-        key="s2_embed_upload",
-        on_change=handle_panel_upload,
-        args=("s2_embed_upload", "embeddings"),
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-    )
-    if st.session_state.get("_upload_error_s2_embed_upload"):
-        st.error(st.session_state["_upload_error_s2_embed_upload"])
+    with col_srv:
+        st.markdown("**Generate on this server**")
+        st.caption("Runs using SPECTER2. Papers without title or abstract are skipped.")
+        if st.button("Generate embeddings", key="run_embed", disabled=_is_running, use_container_width=True):
+            if "_dl_papers" not in st.session_state:
+                st.error("No papers loaded. Upload a file in the Paper Input section first.")
+            else:
+                from pipeline.embed import embed_papers
+                papers = parse_papers_csv(st.session_state["_dl_papers"])
+                papers = [p for p in papers if p.get("title", "").strip() and p.get("abstract", "").strip()]
+                st.session_state["running"] = True
+                prog = st.progress(0, text="Loading SPECTER2 model...")
+                def _cb(cur, tot):
+                    prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
+                try:
+                    embeddings = embed_papers(papers, progress_callback=_cb)
+                    prog.progress(1.0, text="Done.")
+                    ids = [p["id"] for p in papers]
+                    st.session_state["step1_embeddings"] = embeddings
+                    st.session_state["step1_embed_ids"] = ids
+                finally:
+                    st.session_state["running"] = False
+                _clear_downstream_embeddings()
+                st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
+                st.rerun()
+        st.caption("Or upload an embeddings CSV:")
+        st.file_uploader(
+            "Embeddings CSV",
+            type=["csv"],
+            key="ul_adv_embed",
+            on_change=handle_panel_upload,
+            args=("ul_adv_embed", "embeddings"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_ul_adv_embed"):
+            st.error(st.session_state["_upload_error_ul_adv_embed"])
 
-    st.divider()
-    st.markdown("**Upload embeddings directly**")
-    st.caption("Skip generation entirely by uploading your own embeddings CSV.")
-    st.file_uploader(
-        "Embeddings CSV",
-        type=["csv"],
-        key="ul_adv_embed",
-        on_change=handle_panel_upload,
-        args=("ul_adv_embed", "embeddings"),
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-    )
-    if st.session_state.get("_upload_error_ul_adv_embed"):
-        st.error(st.session_state["_upload_error_ul_adv_embed"])
+    with col_colab:
+        st.markdown("**Generate on Colab** (faster, requires a Google account)")
+        st.caption("Runs on a free GPU. You need to move files manually.")
+        _papers_dl_bytes = st.session_state.get("_dl_papers", b"")
+        st.download_button(
+            "1. Download papers CSV", _papers_dl_bytes, "papers.csv",
+            mime="text/csv", key="dl_papers_for_colab",
+            disabled=not bool(_papers_dl_bytes), use_container_width=True,
+        )
+        st.link_button(
+            "2. Open Colab notebook",
+            "https://colab.research.google.com/github/jpbascur/snipets/blob/main/generate_embeddings.ipynb",
+            use_container_width=True,
+        )
+        st.caption("3. Upload the embeddings file you get from Colab:")
+        st.file_uploader(
+            "Embeddings CSV from Colab",
+            type=["csv"],
+            key="s2_embed_upload",
+            on_change=handle_panel_upload,
+            args=("s2_embed_upload", "embeddings"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_s2_embed_upload"):
+            st.error(st.session_state["_upload_error_s2_embed_upload"])
 
     if "step1_embeddings" in st.session_state:
         emb = st.session_state["step1_embeddings"]
@@ -765,50 +840,87 @@ with st.expander("2. Embeddings", expanded=False):
 # STEP 3 - CREATE MAP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("3. Create Map", expanded=False):
+    st.markdown("**Network map**")
     st.caption("Builds a cosine similarity network - each paper connects to its most similar papers.")
-    if st.button("Build network map", key="run_network", disabled=_is_running, use_container_width=True):
-        if "step1_embeddings" not in st.session_state:
-            st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
-        else:
-            embed_src = st.session_state["step1_embeddings"]
-            papers_src = st.session_state["step1_papers"]
-            from pipeline.network import build_edge_list
-            st.session_state["running"] = True
-            prog = st.progress(0, text="Building network...")
-            def _cb_net(cur, tot):
-                prog.progress(cur / tot, text=f"Processing {cur}/{tot} papers...")
-            try:
-                with st.spinner("Computing similarities..."):
-                    edges = build_edge_list(
-                        embed_src, top_k=20, min_similarity=0.0, progress_callback=_cb_net,
-                    )
-                prog.progress(1.0, text="Done.")
-                _clear_downstream_edges()
-                st.session_state["step2_edges"] = edges
-                st.session_state["_dl_edges"] = _edges_to_csv_bytes(edges)
-                items = [
-                    {"id": str(idx + 1), "label": p.get("title", p.get("id", str(idx + 1))),
-                     "description": str(p.get("id", ""))}
-                    for idx, p in enumerate(papers_src)
-                ]
-                links = [
-                    {"source_id": str(i + 1), "target_id": str(j + 1), "strength": round(w, 6)}
-                    for i, j, w in edges
-                ]
-                sid = st.session_state["session_id"]
-                vos_data_auto  = {"network": {"items": items, "links": links}}
-                vos_data_fixed = {"network": {"items": [{**item, "cluster": 1} for item in items], "links": links}}
-                st.session_state["vos_json_auto"]      = json.dumps(vos_data_auto,  indent=2)
-                st.session_state["vos_json_fixed"]     = json.dumps(vos_data_fixed, indent=2)
-                st.session_state["vos_json_url_auto"]  = _write_static_json(f"{sid}_network_auto.json",  vos_data_auto)
-                st.session_state["vos_json_url_fixed"] = _write_static_json(f"{sid}_network_fixed.json", vos_data_fixed)
-            finally:
-                st.session_state["running"] = False
-            st.rerun()
+    col_net_gen, col_net_up = st.columns(2)
 
-    if "vos_json_auto" in st.session_state:
+    with col_net_gen:
+        st.markdown("**Build from embeddings**")
+        _net_top_k = st.slider(
+            "Connections per paper (top_k)", min_value=1, max_value=50, value=20, step=1,
+            key="net_top_k",
+            help="How many nearest neighbours each paper is connected to.",
+        )
+        _net_min_sim = st.slider(
+            "Minimum similarity", min_value=0.0, max_value=1.0, value=0.0, step=0.01,
+            key="net_min_sim",
+            help="Edges below this cosine similarity are dropped.",
+        )
+        _net_clustering = st.radio(
+            "Clustering in VOSviewer",
+            options=["Auto (VOSviewer detects clusters)", "None (all papers same color)"],
+            key="net_clustering",
+            help="Auto lets VOSviewer run its own clustering algorithm. None puts all papers in one group.",
+        )
+        if st.button("Build network map", key="run_network", disabled=_is_running, use_container_width=True):
+            if "step1_embeddings" not in st.session_state:
+                st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
+            else:
+                embed_src = st.session_state["step1_embeddings"]
+                from pipeline.network import build_edge_list
+                st.session_state["running"] = True
+                prog = st.progress(0, text="Building network...")
+                def _cb_net(cur, tot):
+                    prog.progress(cur / tot, text=f"Processing {cur}/{tot} papers...")
+                try:
+                    with st.spinner("Computing similarities..."):
+                        edges = build_edge_list(
+                            embed_src, top_k=_net_top_k, min_similarity=_net_min_sim, progress_callback=_cb_net,
+                        )
+                    prog.progress(1.0, text="Done.")
+                    _clear_downstream_edges()
+                    st.session_state["step2_edges"] = edges
+                    edges_csv = _edges_to_csv_bytes(edges)
+                    st.session_state["_dl_edges"] = edges_csv
+                    _clustering_val = "none" if _net_clustering.startswith("None") else "auto"
+                    sid = st.session_state["session_id"]
+                    vos_data = _build_vos_network_json(st.session_state["_dl_papers"], edges_csv, clustering=_clustering_val)
+                    st.session_state["vos_json"]     = json.dumps(vos_data, indent=2)
+                    st.session_state["vos_json_url"] = _write_static_json(f"{sid}_network.json", vos_data)
+                finally:
+                    st.session_state["running"] = False
+                st.rerun()
+
+    with col_net_up:
+        st.markdown("**Upload pre-built files**")
+        st.caption("Edges CSV (columns: source, target, weight):")
+        st.file_uploader(
+            "Edges CSV",
+            type=["csv"],
+            key="ul_adv_edges",
+            on_change=handle_panel_upload,
+            args=("ul_adv_edges", "edges"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_ul_adv_edges"):
+            st.error(st.session_state["_upload_error_ul_adv_edges"])
+        st.caption("Or a VOSviewer network JSON:")
+        st.file_uploader(
+            "VOSviewer network JSON",
+            type=["json"],
+            key="ul_adv_network_vos",
+            on_change=handle_panel_upload,
+            args=("ul_adv_network_vos", "network_vos"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_ul_adv_network_vos"):
+            st.error(st.session_state["_upload_error_ul_adv_network_vos"])
+
+    if "vos_json" in st.session_state:
         st.success(f"Network map ready - {len(st.session_state['step2_edges'])} connections.")
-        vos_url = _vosviewer_url(st.session_state.get("vos_json_url_auto"), max_n_links=0)
+        vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
         if vos_url:
             st.link_button("Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
         else:
@@ -820,41 +932,73 @@ with st.expander("3. Create Map", expanded=False):
         "Projects papers into 2D space using UMAP - similar papers end up close together. "
         "Good for seeing the overall semantic landscape."
     )
-    if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
-        if "step1_embeddings" not in st.session_state:
-            st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
-        else:
-            from pipeline.reduce import umap_reduce
-            _adv_embed_src = st.session_state["step1_embeddings"]
-            _adv_papers_src = st.session_state["step1_papers"]
-            n = len(_adv_embed_src)
-            estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
-            viz_embed_ids = (st.session_state.get("step1_embed_ids")
-                             or [p["id"] for p in _adv_papers_src])
-            st.session_state["running"] = True
-            try:
-                with st.spinner(f"Running UMAP on {n} papers... ({estimate})"):
-                    coords = umap_reduce(_adv_embed_src, n_neighbors=15, min_dist=0.1)
-                _clear_downstream_coords()
-                st.session_state["viz_coords"] = coords
-                st.session_state["viz_ids"]    = viz_embed_ids
-                st.session_state["_dl_coords"] = _coords_to_csv_bytes(viz_embed_ids, coords)
-                coord_lookup = {pid: (float(x), float(y)) for pid, (x, y) in zip(viz_embed_ids, coords)}
-                items = []
-                for idx, paper in enumerate(_adv_papers_src):
-                    pid = str(paper.get("id", idx + 1))
-                    x, y = coord_lookup.get(pid, (0.0, 0.0))
-                    items.append({
-                        "id": str(idx + 1), "label": paper.get("title", pid),
-                        "description": pid, "x": round(x, 6), "y": round(y, 6), "cluster": 1,
-                    })
-                vos_data = {"network": {"items": items, "links": []}}
-                sid = st.session_state["session_id"]
-                st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
-                st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
-            finally:
-                st.session_state["running"] = False
-            st.rerun()
+    col_coord_gen, col_coord_up = st.columns(2)
+
+    with col_coord_gen:
+        st.markdown("**Build from embeddings**")
+        _umap_n_neighbors = st.slider(
+            "n_neighbors", min_value=2, max_value=100, value=15, step=1,
+            key="umap_n_neighbors",
+            help="Controls how much local vs global structure UMAP preserves. Lower = more local clusters.",
+        )
+        _umap_min_dist = st.slider(
+            "min_dist", min_value=0.0, max_value=1.0, value=0.1, step=0.01,
+            key="umap_min_dist",
+            help="Minimum distance between points in the 2D layout. Lower = tighter clusters.",
+        )
+        if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
+            if "step1_embeddings" not in st.session_state:
+                st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
+            else:
+                from pipeline.reduce import umap_reduce
+                _adv_embed_src = st.session_state["step1_embeddings"]
+                n = len(_adv_embed_src)
+                estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
+                viz_embed_ids = (st.session_state.get("step1_embed_ids")
+                                 or [p["id"] for p in parse_papers_csv(st.session_state["_dl_papers"])])
+                st.session_state["running"] = True
+                try:
+                    with st.spinner(f"Running UMAP on {n} papers... ({estimate})"):
+                        coords = umap_reduce(_adv_embed_src, n_neighbors=_umap_n_neighbors, min_dist=_umap_min_dist)
+                    _clear_downstream_coords()
+                    st.session_state["viz_coords"] = coords
+                    st.session_state["viz_ids"]    = viz_embed_ids
+                    coords_csv = _coords_to_csv_bytes(viz_embed_ids, coords)
+                    st.session_state["_dl_coords"] = coords_csv
+                    sid = st.session_state["session_id"]
+                    vos_data = _build_vos_coords_json(st.session_state["_dl_papers"], coords_csv)
+                    st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
+                    st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
+                finally:
+                    st.session_state["running"] = False
+                st.rerun()
+
+    with col_coord_up:
+        st.markdown("**Upload pre-built files**")
+        st.caption("Coordinates CSV (columns: id, x, y):")
+        st.file_uploader(
+            "Coordinates CSV",
+            type=["csv"],
+            key="ul_adv_coords",
+            on_change=handle_panel_upload,
+            args=("ul_adv_coords", "coords"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_ul_adv_coords"):
+            st.error(st.session_state["_upload_error_ul_adv_coords"])
+        st.caption("Or a VOSviewer coordinates JSON:")
+        st.file_uploader(
+            "VOSviewer coordinates JSON",
+            type=["json"],
+            key="ul_adv_coords_vos",
+            on_change=handle_panel_upload,
+            args=("ul_adv_coords_vos", "coords_vos"),
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+        )
+        if st.session_state.get("_upload_error_ul_adv_coords_vos"):
+            st.error(st.session_state["_upload_error_ul_adv_coords_vos"])
 
     if "viz_vos_json" in st.session_state:
         st.success(f"Coordinate map ready - {len(st.session_state['viz_coords'])} papers.")
@@ -878,8 +1022,8 @@ with st.expander("Files tracker", expanded=False):
             data = st.session_state["raw_file"][1] if loaded else b""
             return loaded, filename if loaded else "-", data, filename, "application/octet-stream"
         if slot_key == "papers":
-            loaded = "step1_papers" in st.session_state
-            status = f"{len(st.session_state['step1_papers'])} papers" if loaded else "-"
+            loaded = "_dl_papers" in st.session_state and bool(st.session_state["_dl_papers"])
+            status = f"{len(parse_papers_csv(st.session_state['_dl_papers']))} papers" if loaded else "-"
             return loaded, status, st.session_state.get("_dl_papers", b""), "papers.csv", "text/csv"
         if slot_key == "embeddings":
             loaded = "step1_embeddings" in st.session_state
@@ -893,8 +1037,8 @@ with st.expander("Files tracker", expanded=False):
             status = f"{len(st.session_state['step2_edges'])} edges" if loaded else "-"
             return loaded, status, st.session_state.get("_dl_edges", b""), "network.csv", "text/csv"
         if slot_key == "network_vos":
-            loaded = "vos_json_auto" in st.session_state
-            data = st.session_state["vos_json_auto"].encode() if loaded else b""
+            loaded = "vos_json" in st.session_state
+            data = st.session_state["vos_json"].encode() if loaded else b""
             return loaded, "Ready" if loaded else "-", data, "vosviewer_network.json", "application/json"
         if slot_key == "coords":
             loaded = "viz_coords" in st.session_state
@@ -907,13 +1051,13 @@ with st.expander("Files tracker", expanded=False):
         raise ValueError(f"Unknown file slot: {slot_key}")
 
     _FILE_SLOTS = [
-        ("raw",         "Reference export",          "dl_panel_raw",       "ul_panel_raw",       ["txt", "nbib", "ris", "bib", "xlsx"]),
-        ("papers",      "Clean paper list",          "dl_panel_papers",    "ul_panel_papers",    ["csv"]),
-        ("embeddings",  "Embeddings",                "dl_panel_embed",     "ul_panel_embed",     ["csv"]),
-        ("edges",       "Paper network",             "dl_panel_edges",     "ul_panel_edges",     ["csv"]),
-        ("network_vos", "VOSviewer network map",     "dl_panel_net_vos",   "ul_panel_net_vos",   ["json"]),
-        ("coords",      "Paper coordinates",         "dl_panel_coords",    "ul_panel_coords",    ["csv"]),
-        ("coords_vos",  "VOSviewer coordinate map",  "dl_panel_coords_vos","ul_panel_coords_vos",["json"]),
+        ("raw",               "Reference export",                 "dl_panel_raw",           "ul_panel_raw",           ["txt", "nbib", "ris", "bib", "xlsx"]),
+        ("papers",            "Clean paper list",                 "dl_panel_papers",         "ul_panel_papers",        ["csv"]),
+        ("embeddings",        "Embeddings",                       "dl_panel_embed",          "ul_panel_embed",         ["csv"]),
+        ("edges",             "Paper network",                    "dl_panel_edges",          "ul_panel_edges",         ["csv"]),
+        ("network_vos", "VOSviewer network map", "dl_panel_net_vos", "ul_panel_net_vos", ["json"]),
+        ("coords",            "Paper coordinates",                "dl_panel_coords",         "ul_panel_coords",        ["csv"]),
+        ("coords_vos",        "VOSviewer coordinate map",         "dl_panel_coords_vos",     "ul_panel_coords_vos",    ["json"]),
     ]
 
     with st.container(border=True):
@@ -929,15 +1073,16 @@ with st.expander("Files tracker", expanded=False):
                     key=dl_key, disabled=not loaded, use_container_width=True,
                 )
             with col_ul:
-                st.file_uploader(
-                    "Upload", type=ul_types, key=ul_key,
-                    accept_multiple_files=False,
-                    on_change=handle_panel_upload,
-                    args=(ul_key, slot_key),
-                    label_visibility="collapsed",
-                )
-                upload_error = st.session_state.get(f"_upload_error_{ul_key}")
-                if upload_error:
-                    st.error(upload_error)
+                if ul_key is not None:
+                    st.file_uploader(
+                        "Upload", type=ul_types, key=ul_key,
+                        accept_multiple_files=False,
+                        on_change=handle_panel_upload,
+                        args=(ul_key, slot_key),
+                        label_visibility="collapsed",
+                    )
+                    upload_error = st.session_state.get(f"_upload_error_{ul_key}")
+                    if upload_error:
+                        st.error(upload_error)
             if i < len(_FILE_SLOTS) - 1:
                 st.divider()
