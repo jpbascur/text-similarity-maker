@@ -678,7 +678,7 @@ with st.expander("2. Embeddings", expanded=False):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("3. Create Map", expanded=False):
     if "step1_embeddings" not in st.session_state:
-        st.info("No embeddings in the tool yet. Generate them above.")
+        st.info("No embeddings in the tool yet. Generate or upload them above.")
     else:
         embed_src = st.session_state["step1_embeddings"]
         papers_src = st.session_state["step1_papers"]
