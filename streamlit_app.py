@@ -610,9 +610,8 @@ with st.expander("One click map", expanded=True):
 with st.expander("1. Paper Input", expanded=False):
     st.caption(
         "Upload a reference export file. "
-        "Supported formats: RIS (.ris), BibTeX (.bib), PubMed (.txt, .nbib)."
+        "Supported formats: RIS (.ris), BibTeX (.bib), PubMed (.txt, .nbib), Excel (.xlsx)."
     )
-
     st.file_uploader(
         "Reference export",
         type=["ris", "bib", "txt", "nbib", "xlsx"],
@@ -622,8 +621,7 @@ with st.expander("1. Paper Input", expanded=False):
         accept_multiple_files=False,
         label_visibility="collapsed",
     )
-
-    if st.session_state.get(f"_upload_error_s1_raw_upload"):
+    if st.session_state.get("_upload_error_s1_raw_upload"):
         st.error(st.session_state["_upload_error_s1_raw_upload"])
 
     if "raw_file" in st.session_state:
@@ -652,52 +650,11 @@ with st.expander("1. Paper Input", expanded=False):
             n_total = len(papers_ref)
             n_abstract = sum(1 for p in papers_ref if p["abstract"])
             st.caption(f"{n_total} papers found - {n_abstract} with abstracts, {n_total - n_abstract} without.")
-            if n_total > 0 and st.button("Use these papers", key="load_ref", type="primary"):
-                _dl = _papers_to_csv_bytes(papers_ref)
-                st.session_state["step1_papers"] = papers_ref
-                st.session_state["s1_file"] = ("papers.csv", _dl)
-                _clear_downstream_papers()
-                st.session_state["_dl_papers"] = _dl
-                st.rerun()
-
-    with st.expander("Alternative path (for advanced users)", expanded=False):
-        col_adv1, col_adv2 = st.columns(2)
-        with col_adv1:
-            st.markdown("**Upload reference export**")
-            st.caption("Alternative upload for RIS, BibTeX, or PubMed files.")
-            st.file_uploader(
-                "Reference export (advanced)",
-                type=["ris", "bib", "txt", "nbib", "xlsx"],
-                key="s1_raw_upload_adv",
-                on_change=handle_panel_upload,
-                args=("s1_raw_upload_adv", "raw"),
-                accept_multiple_files=False,
-                label_visibility="collapsed",
-            )
-            if st.session_state.get("_upload_error_s1_raw_upload_adv"):
-                st.error(st.session_state["_upload_error_s1_raw_upload_adv"])
-        with col_adv2:
-            st.markdown("**Upload clean paper list**")
-            st.caption("Upload a formatted CSV (id, title, abstract). Skips the format step entirely.")
-            st.file_uploader(
-                "Clean paper list",
-                type=["csv"],
-                key="ul_adv_papers",
-                on_change=handle_panel_upload,
-                args=("ul_adv_papers", "papers"),
-                accept_multiple_files=False,
-                label_visibility="collapsed",
-            )
-            if st.session_state.get("_upload_error_ul_adv_papers"):
-                st.error(st.session_state["_upload_error_ul_adv_papers"])
-        if "_raw_parsed" in st.session_state:
-            adv_papers_ref = st.session_state["_raw_parsed"]
-            adv_n_total = len(adv_papers_ref)
             ignore = st.checkbox("Ignore papers without title or abstract", value=True, key="s1_ignore_incomplete")
-            if adv_n_total > 0 and st.button("Use these papers", key="load_ref_adv"):
-                papers_to_use = adv_papers_ref
+            if n_total > 0 and st.button("Use these papers", key="load_ref", type="primary"):
+                papers_to_use = papers_ref
                 if ignore:
-                    papers_to_use = [p for p in adv_papers_ref
+                    papers_to_use = [p for p in papers_ref
                                      if p.get("title", "").strip() and p.get("abstract", "").strip()]
                 _dl = _papers_to_csv_bytes(papers_to_use)
                 st.session_state["step1_papers"] = papers_to_use
@@ -705,6 +662,21 @@ with st.expander("1. Paper Input", expanded=False):
                 _clear_downstream_papers()
                 st.session_state["_dl_papers"] = _dl
                 st.rerun()
+
+    st.divider()
+    st.markdown("**Or upload a pre-formatted paper list**")
+    st.caption("CSV with columns: id, title, abstract. Skips the format step entirely.")
+    st.file_uploader(
+        "Clean paper list",
+        type=["csv"],
+        key="ul_adv_papers",
+        on_change=handle_panel_upload,
+        args=("ul_adv_papers", "papers"),
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+    )
+    if st.session_state.get("_upload_error_ul_adv_papers"):
+        st.error(st.session_state["_upload_error_ul_adv_papers"])
 
     if "step1_papers" in st.session_state:
         st.success(f"{len(st.session_state['step1_papers'])} papers ready.")
@@ -740,47 +712,47 @@ with st.expander("2. Embeddings", expanded=False):
             st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
             st.rerun()
 
-    with st.expander("Alternative path (for advanced users)", expanded=False):
-        st.markdown("**Generate on Colab** (faster, requires a Google account)")
-        st.caption("Runs on a free GPU. You need to move files manually.")
-        _papers_dl_bytes = st.session_state.get("_dl_papers", b"")
-        st.download_button(
-            "1. Download papers CSV", _papers_dl_bytes, "papers.csv",
-            mime="text/csv", key="dl_papers_for_colab",
-            disabled=not bool(_papers_dl_bytes), use_container_width=True,
-        )
-        st.link_button(
-            "2. Open Colab notebook",
-            "https://colab.research.google.com/github/jpbascur/snipets/blob/main/generate_embeddings.ipynb",
-            use_container_width=True,
-        )
-        st.caption("3. Upload the embeddings file you get from Colab:")
-        st.file_uploader(
-            "Embeddings CSV from Colab",
-            type=["csv"],
-            key="s2_embed_upload",
-            on_change=handle_panel_upload,
-            args=("s2_embed_upload", "embeddings"),
-            accept_multiple_files=False,
-            label_visibility="collapsed",
-        )
-        if st.session_state.get("_upload_error_s2_embed_upload"):
-            st.error(st.session_state["_upload_error_s2_embed_upload"])
+    st.divider()
+    st.markdown("**Generate on Colab** (faster, requires a Google account)")
+    st.caption("Runs on a free GPU. You need to move files manually.")
+    _papers_dl_bytes = st.session_state.get("_dl_papers", b"")
+    st.download_button(
+        "1. Download papers CSV", _papers_dl_bytes, "papers.csv",
+        mime="text/csv", key="dl_papers_for_colab",
+        disabled=not bool(_papers_dl_bytes), use_container_width=True,
+    )
+    st.link_button(
+        "2. Open Colab notebook",
+        "https://colab.research.google.com/github/jpbascur/snipets/blob/main/generate_embeddings.ipynb",
+        use_container_width=True,
+    )
+    st.caption("3. Upload the embeddings file you get from Colab:")
+    st.file_uploader(
+        "Embeddings CSV from Colab",
+        type=["csv"],
+        key="s2_embed_upload",
+        on_change=handle_panel_upload,
+        args=("s2_embed_upload", "embeddings"),
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+    )
+    if st.session_state.get("_upload_error_s2_embed_upload"):
+        st.error(st.session_state["_upload_error_s2_embed_upload"])
 
-        st.divider()
-        st.markdown("**Upload embeddings directly**")
-        st.caption("Skip generation entirely by uploading your own embeddings CSV.")
-        st.file_uploader(
-            "Embeddings CSV",
-            type=["csv"],
-            key="ul_adv_embed",
-            on_change=handle_panel_upload,
-            args=("ul_adv_embed", "embeddings"),
-            accept_multiple_files=False,
-            label_visibility="collapsed",
-        )
-        if st.session_state.get("_upload_error_ul_adv_embed"):
-            st.error(st.session_state["_upload_error_ul_adv_embed"])
+    st.divider()
+    st.markdown("**Upload embeddings directly**")
+    st.caption("Skip generation entirely by uploading your own embeddings CSV.")
+    st.file_uploader(
+        "Embeddings CSV",
+        type=["csv"],
+        key="ul_adv_embed",
+        on_change=handle_panel_upload,
+        args=("ul_adv_embed", "embeddings"),
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+    )
+    if st.session_state.get("_upload_error_ul_adv_embed"):
+        st.error(st.session_state["_upload_error_ul_adv_embed"])
 
     if "step1_embeddings" in st.session_state:
         emb = st.session_state["step1_embeddings"]
@@ -841,56 +813,56 @@ with st.expander("3. Create Map", expanded=False):
             else:
                 st.caption("Download the VOSviewer network file from the Files panel below and open it in VOSviewer Online manually.")
 
-    with st.expander("Alternative path (for advanced users)", expanded=False):
-        st.markdown("**Coordinate map**")
-        st.caption(
-            "Projects papers into 2D space using UMAP - similar papers end up close together. "
-            "Good for seeing the overall semantic landscape."
-        )
-        if "step1_embeddings" not in st.session_state:
-            st.info("No embeddings in the tool yet.")
-        else:
-            _adv_embed_src = st.session_state["step1_embeddings"]
-            _adv_papers_src = st.session_state["step1_papers"]
-            n = len(_adv_embed_src)
-            estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
-            st.caption(f"Expected time: {estimate} for {n} papers.")
-            if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
-                from pipeline.reduce import umap_reduce
-                viz_embed_ids = (st.session_state.get("step1_embed_ids")
-                                 or [p["id"] for p in _adv_papers_src])
-                st.session_state["running"] = True
-                try:
-                    with st.spinner(f"Running UMAP on {n} papers... ({estimate})"):
-                        coords = umap_reduce(_adv_embed_src, n_neighbors=15, min_dist=0.1)
-                    _clear_downstream_coords()
-                    st.session_state["viz_coords"] = coords
-                    st.session_state["viz_ids"]    = viz_embed_ids
-                    st.session_state["_dl_coords"] = _coords_to_csv_bytes(viz_embed_ids, coords)
-                    coord_lookup = {pid: (float(x), float(y)) for pid, (x, y) in zip(viz_embed_ids, coords)}
-                    items = []
-                    for idx, paper in enumerate(_adv_papers_src):
-                        pid = str(paper.get("id", idx + 1))
-                        x, y = coord_lookup.get(pid, (0.0, 0.0))
-                        items.append({
-                            "id": str(idx + 1), "label": paper.get("title", pid),
-                            "description": pid, "x": round(x, 6), "y": round(y, 6), "cluster": 1,
-                        })
-                    vos_data = {"network": {"items": items, "links": []}}
-                    sid = st.session_state["session_id"]
-                    st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
-                    st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
-                finally:
-                    st.session_state["running"] = False
-                st.rerun()
+    st.divider()
+    st.markdown("**Coordinate map**")
+    st.caption(
+        "Projects papers into 2D space using UMAP - similar papers end up close together. "
+        "Good for seeing the overall semantic landscape."
+    )
+    if "step1_embeddings" not in st.session_state:
+        st.info("No embeddings in the tool yet.")
+    else:
+        _adv_embed_src = st.session_state["step1_embeddings"]
+        _adv_papers_src = st.session_state["step1_papers"]
+        n = len(_adv_embed_src)
+        estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
+        st.caption(f"Expected time: {estimate} for {n} papers.")
+        if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
+            from pipeline.reduce import umap_reduce
+            viz_embed_ids = (st.session_state.get("step1_embed_ids")
+                             or [p["id"] for p in _adv_papers_src])
+            st.session_state["running"] = True
+            try:
+                with st.spinner(f"Running UMAP on {n} papers... ({estimate})"):
+                    coords = umap_reduce(_adv_embed_src, n_neighbors=15, min_dist=0.1)
+                _clear_downstream_coords()
+                st.session_state["viz_coords"] = coords
+                st.session_state["viz_ids"]    = viz_embed_ids
+                st.session_state["_dl_coords"] = _coords_to_csv_bytes(viz_embed_ids, coords)
+                coord_lookup = {pid: (float(x), float(y)) for pid, (x, y) in zip(viz_embed_ids, coords)}
+                items = []
+                for idx, paper in enumerate(_adv_papers_src):
+                    pid = str(paper.get("id", idx + 1))
+                    x, y = coord_lookup.get(pid, (0.0, 0.0))
+                    items.append({
+                        "id": str(idx + 1), "label": paper.get("title", pid),
+                        "description": pid, "x": round(x, 6), "y": round(y, 6), "cluster": 1,
+                    })
+                vos_data = {"network": {"items": items, "links": []}}
+                sid = st.session_state["session_id"]
+                st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
+                st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
+            finally:
+                st.session_state["running"] = False
+            st.rerun()
 
-            if "viz_vos_json" in st.session_state:
-                st.success(f"Coordinate map ready - {len(st.session_state['viz_coords'])} papers.")
-                viz_vos_url = _vosviewer_url(st.session_state.get("viz_vos_json_url"))
-                if viz_vos_url:
-                    st.link_button("Open in VOSviewer Online", viz_vos_url, type="primary", use_container_width=True)
-                else:
-                    st.caption("Download the VOSviewer coordinates file from the Files panel below and open it in VOSviewer Online manually.")
+        if "viz_vos_json" in st.session_state:
+            st.success(f"Coordinate map ready - {len(st.session_state['viz_coords'])} papers.")
+            viz_vos_url = _vosviewer_url(st.session_state.get("viz_vos_json_url"))
+            if viz_vos_url:
+                st.link_button("Open in VOSviewer Online", viz_vos_url, type="primary", use_container_width=True)
+            else:
+                st.caption("Download the VOSviewer coordinates file from the Files panel below and open it in VOSviewer Online manually.")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
