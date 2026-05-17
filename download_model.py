@@ -2,6 +2,16 @@
 Pre-downloads SPECTER2 model and proximity adapter into the HuggingFace cache.
 Run once at Docker build time so the model is baked into the image.
 """
+from importlib.metadata import version
+
+transformers_version = version("transformers")
+major_minor = tuple(int(part) for part in transformers_version.split(".")[:2])
+if major_minor < (4, 40) or major_minor >= (4, 52):
+    raise RuntimeError(
+        f"Unsupported transformers {transformers_version}. "
+        "Install requirements.txt so transformers stays in the supported >=4.40,<4.52 range."
+    )
+
 from transformers import AutoTokenizer
 from adapters import AutoAdapterModel
 

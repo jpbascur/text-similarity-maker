@@ -13,6 +13,29 @@ from typing import Union
 import numpy as np
 
 
+def _check_embedding_dependencies():
+    """Fail early if the installed SPECTER2 adapter stack is incompatible."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        transformers_version = version("transformers")
+        adapters_version = version("adapters")
+    except PackageNotFoundError as exc:
+        raise RuntimeError(
+            "Missing embedding dependency. Install the pinned requirements with "
+            "`pip install -r requirements.txt`."
+        ) from exc
+
+    major_minor = tuple(int(part) for part in transformers_version.split(".")[:2])
+    if major_minor < (4, 40) or major_minor >= (4, 52):
+        raise RuntimeError(
+            "Incompatible embedding dependencies: "
+            f"transformers {transformers_version} with adapters {adapters_version}. "
+            "Install the pinned requirements with `pip install -r requirements.txt` "
+            "so transformers stays in the supported >=4.40,<4.52 range."
+        )
+
+
 def load_papers(path: Union[str, Path]) -> list[dict]:
     """Load papers from a CSV or JSON file.
 
@@ -46,6 +69,7 @@ def _load_model():
     """Load and cache the SPECTER2 model and tokenizer (once per process)."""
     if _model_cache:
         return _model_cache["tokenizer"], _model_cache["model"]
+    _check_embedding_dependencies()
     from transformers import AutoTokenizer
     from adapters import AutoAdapterModel
     model_name = "allenai/specter2_base"
