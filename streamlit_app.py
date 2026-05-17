@@ -36,8 +36,8 @@ st.markdown(
     "**Supported input formats:**\n\n"
     "- **RIS** (.ris) — exported by Scopus, Web of Science, Zotero, Mendeley, EndNote\n"
     "- **BibTeX** (.bib) — exported by Google Scholar, Zotero, and most reference managers\n"
-    "- **PubMed** (.txt, .nbib) — to export from PubMed: search your papers, "
-    "click *Send to*, choose *File*, and set Format to *PubMed*"
+    "- **PubMed** (.txt) — from PubMed: click *Send to* → *File* → Format: *PubMed*\n"
+    "- **PubMed Citation Manager** (.nbib) — from PubMed: click *Send to* → *Citation Manager*"
 )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
