@@ -686,31 +686,33 @@ with st.expander("1. Paper Input", expanded=False):
 # STEP 2 - EMBEDDINGS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander("2. Embeddings", expanded=False):
-    if "step1_papers" not in st.session_state:
-        st.info("No papers in the tool yet. Upload a file above.")
-    else:
-        st.caption("Runs on this server using SPECTER2. Papers without title or abstract are skipped.")
-        if _mem_caption:
-            st.caption(_mem_caption)
-        if st.button("Generate embeddings", key="run_embed", disabled=_is_running, use_container_width=True):
-            from pipeline.embed import embed_papers
-            papers = [p for p in st.session_state["step1_papers"]
-                      if p.get("title", "").strip() and p.get("abstract", "").strip()]
-            st.session_state["running"] = True
-            prog = st.progress(0, text="Loading SPECTER2 model...")
-            def _cb(cur, tot):
-                prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
-            try:
-                embeddings = embed_papers(papers, progress_callback=_cb)
-                prog.progress(1.0, text="Done.")
-                ids = [p["id"] for p in papers]
-                st.session_state["step1_embeddings"] = embeddings
-                st.session_state["step1_embed_ids"] = ids
-            finally:
-                st.session_state["running"] = False
-            _clear_downstream_embeddings()
-            st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
-            st.rerun()
+    st.markdown("**Generate on this server**")
+    st.caption("Runs using SPECTER2. Papers without title or abstract are skipped.")
+    if _mem_caption:
+        st.caption(_mem_caption)
+    _has_papers = "step1_papers" in st.session_state
+    if not _has_papers:
+        st.caption("No papers in the tool yet. Upload a file in the Paper Input section.")
+    if st.button("Generate embeddings", key="run_embed",
+                 disabled=_is_running or not _has_papers, use_container_width=True):
+        from pipeline.embed import embed_papers
+        papers = [p for p in st.session_state["step1_papers"]
+                  if p.get("title", "").strip() and p.get("abstract", "").strip()]
+        st.session_state["running"] = True
+        prog = st.progress(0, text="Loading SPECTER2 model...")
+        def _cb(cur, tot):
+            prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
+        try:
+            embeddings = embed_papers(papers, progress_callback=_cb)
+            prog.progress(1.0, text="Done.")
+            ids = [p["id"] for p in papers]
+            st.session_state["step1_embeddings"] = embeddings
+            st.session_state["step1_embed_ids"] = ids
+        finally:
+            st.session_state["running"] = False
+        _clear_downstream_embeddings()
+        st.session_state["_dl_embeddings"] = array_to_csv_bytes(embeddings, ids=ids)
+        st.rerun()
 
     st.divider()
     st.markdown("**Generate on Colab** (faster, requires a Google account)")
