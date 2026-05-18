@@ -399,10 +399,10 @@ with st.expander("One click map", expanded=True):
                         _clear_downstream_papers()
                         st.session_state["_dl_papers"] = _ocm_dl
 
-                        _ocm_prog = st.progress(0, text="Encoding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
+                        _ocm_prog = st.progress(0, text="Embedding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
                         _ocm_tokenizer, _ocm_model = _get_model()
                         def _ocm_cb(cur, tot):
-                            _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
+                            _ocm_prog.progress(cur / tot, text=f"Embedding {cur}/{tot}...")
                         _ocm_emb_bytes = embed_papers(_ocm_dl, _ocm_tokenizer, _ocm_model, progress_callback=_ocm_cb)
                         _ocm_prog.progress(1.0, text="Embeddings done.")
                         _clear_downstream_papers()
@@ -520,9 +520,9 @@ with st.expander("2. Embeddings", expanded=False):
                 st.error("No papers loaded. Upload a file in the Paper Input section first.")
             else:
                 st.session_state["running"] = True
-                prog = st.progress(0, text="Encoding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
+                prog = st.progress(0, text="Embedding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
                 def _cb(cur, tot):
-                    prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
+                    prog.progress(cur / tot, text=f"Embedding {cur}/{tot}...")
                 try:
                     _tokenizer, _model = _get_model()
                     _dl_emb = embed_papers(st.session_state["_dl_papers"], _tokenizer, _model, progress_callback=_cb)

@@ -9,23 +9,9 @@ pinned: false
 
 # TSM — Text Similarity Maker
 
-Upload scientific papers and get a [VOSviewer](https://www.vosviewer.com) science map based on text similarity.
+Turn a list of scientific papers into a [VOSviewer](https://www.vosviewer.com) science map based on text similarity.
 
-Use the **One click map** for the simplest experience, or the step-by-step sections for more control and speed. If you get stuck, reload.
-
-## Pipeline
-
-| Step | Input | Output |
-|------|-------|--------|
-| 1 · Parse | Reference export file | Papers CSV (id, title, abstract) |
-| 2 · Embed | Papers CSV | Embeddings CSV (SPECTER2 vectors) |
-| 3 · Network | Embeddings CSV | Network CSV (cosine similarity edge list) |
-| 3 · UMAP | Embeddings CSV | Coordinates CSV (2D layout) |
-| 4 · Export | Papers + Network / Coordinates | VOSviewer JSON |
-
-Each file can be saved and re-uploaded independently — you never have to re-run earlier steps if the outputs already exist.
-
-All pipeline logic lives in `app/pipeline.py`. Each of the six main functions is self-contained: it takes file bytes as input and returns file bytes as output, with no dependency on Streamlit or the web app. You can copy any function directly into your own script or notebook — just bring the helper functions defined above it (noted in the section header comments).
+Use the **One click map** for the simplest experience, or the step-by-step sections below for more control. If you get stuck, reload.
 
 ## Supported input formats
 
@@ -33,6 +19,20 @@ All pipeline logic lives in `app/pipeline.py`. Each of the six main functions is
 - **BibTeX** (.bib) — Google Scholar, Zotero, most reference managers
 - **PubMed** (.txt, .nbib) — from the PubMed website
 - **Excel** (.xlsx) — manually built spreadsheets with columns `id`, `title`, `abstract`
+
+## How it works
+
+1. **Parse** — reads your reference export and extracts title and abstract for each paper
+2. **Embed** — encodes each paper into a vector using SPECTER2 (a scientific language model)
+3. **Network** — connects each paper to its most similar neighbours using cosine similarity
+4. **UMAP** *(optional)* — projects papers into 2D for a coordinate map
+5. **Export** — builds a VOSviewer JSON you can open directly in VOSviewer Online
+
+Each intermediate file (papers CSV, embeddings CSV, network CSV) can be saved and re-uploaded — you never have to redo earlier steps if the outputs already exist.
+
+## For developers
+
+All pipeline logic lives in `app/pipeline.py` as six self-contained functions. Each takes file bytes as input and returns file bytes as output, with no dependency on Streamlit. You can copy any function into your own script or notebook — the section header comments note which shared helpers to bring along.
 
 ## Repo structure
 
