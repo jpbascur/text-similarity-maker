@@ -251,12 +251,8 @@ def _check_embedding_dependencies():
         )
 
 
-loaded_model: dict = {}  # keys: tokenizer, model, loaded_at — managed by the app
-
-
-def _load_model():
-    if loaded_model:
-        return loaded_model["tokenizer"], loaded_model["model"]
+def load_model():
+    """Load SPECTER2 tokenizer and proximity adapter. Call once and cache the result."""
     _check_embedding_dependencies()
     from transformers import AutoTokenizer
     from adapters import AutoAdapterModel
@@ -264,16 +260,16 @@ def _load_model():
     model = AutoAdapterModel.from_pretrained("allenai/specter2_base")
     model.load_adapter("allenai/specter2", source="hf", load_as="proximity", set_active=True)
     model.eval()
-    loaded_model["tokenizer"] = tokenizer
-    loaded_model["model"]     = model
     return tokenizer, model
 
 
-def embed_papers(papers_csv: bytes, batch_size: int = 64, progress_callback=None) -> bytes:
+def embed_papers(papers_csv: bytes, tokenizer, model, batch_size: int = 64, progress_callback=None) -> bytes:
     """Encode papers with SPECTER2 + proximity adapter; return embeddings CSV bytes.
 
     Args:
         papers_csv:        Papers CSV bytes (columns: id, title, abstract).
+        tokenizer:         SPECTER2 tokenizer (from load_model()).
+        model:             SPECTER2 model (from load_model()).
         batch_size:        Number of papers to encode per forward pass (default 64).
         progress_callback: Optional function(current, total) called after each batch.
                            Use this to update a progress bar in your UI. Leave as None
@@ -284,7 +280,6 @@ def embed_papers(papers_csv: bytes, batch_size: int = 64, progress_callback=None
     import torch
 
     papers = parse_papers_csv(papers_csv)
-    tokenizer, model = _load_model()
     all_embeddings, ids = [], []
 
     with torch.no_grad():

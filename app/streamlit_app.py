@@ -39,7 +39,7 @@ from pipeline import (
     build_vos_coords_json,
     build_vos_network_json,
     embed_papers,
-    loaded_model,
+    load_model,
     parse_coords_csv,
     parse_edge_csv,
     parse_embeddings_csv,
@@ -47,6 +47,11 @@ from pipeline import (
     parse_reference_file,
     umap_reduce,
 )
+
+
+@st.cache_resource(ttl=3600)
+def _get_model():
+    return load_model()
 
 
 def papers_to_csv_bytes(papers: list[dict]) -> bytes:
@@ -340,10 +345,6 @@ _now = _time.time()
 for _f in _STATIC_DIR.glob("*.json"):      # static JSON files older than 24 h
     if _now - _f.stat().st_mtime > 86400:
         _f.unlink(missing_ok=True)
-if _now - float(loaded_model.get("loaded_at", 0)) > 3600:   # SPECTER2 model older than 1 h
-    import gc
-    loaded_model.clear()
-    gc.collect()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -404,11 +405,11 @@ with st.expander("One click map", expanded=True):
                         _clear_downstream_papers()
                         st.session_state["_dl_papers"] = _ocm_dl
 
-                        _ocm_prog = st.progress(0, text="Loading SPECTER2 model...")
+                        _ocm_tokenizer, _ocm_model = _get_model()
+                        _ocm_prog = st.progress(0, text="Encoding papers...")
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
-                        _ocm_emb_bytes = embed_papers(_ocm_dl, progress_callback=_ocm_cb)
-                        loaded_model["loaded_at"] = _time.time()
+                        _ocm_emb_bytes = embed_papers(_ocm_dl, _ocm_tokenizer, _ocm_model, progress_callback=_ocm_cb)
                         _ocm_prog.progress(1.0, text="Embeddings done.")
                         _clear_downstream_embeddings()
                         st.session_state["_dl_embeddings"] = _ocm_emb_bytes
@@ -525,12 +526,12 @@ with st.expander("2. Embeddings", expanded=False):
                 st.error("No papers loaded. Upload a file in the Paper Input section first.")
             else:
                 st.session_state["running"] = True
-                prog = st.progress(0, text="Loading SPECTER2 model...")
+                prog = st.progress(0, text="Encoding papers...")
                 def _cb(cur, tot):
                     prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                 try:
-                    _dl_emb = embed_papers(st.session_state["_dl_papers"], progress_callback=_cb)
-                    loaded_model["loaded_at"] = _time.time()
+                    _tokenizer, _model = _get_model()
+                    _dl_emb = embed_papers(st.session_state["_dl_papers"], _tokenizer, _model, progress_callback=_cb)
                     prog.progress(1.0, text="Done.")
                     _clear_downstream_embeddings()
                     st.session_state["_dl_embeddings"] = _dl_emb
