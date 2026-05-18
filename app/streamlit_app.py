@@ -50,26 +50,9 @@ from pipeline import (
 )
 
 
-_MODEL_TTL = 3600
-
 @st.cache_resource
-def _model_container() -> dict:
-    return {"tokenizer": None, "model": None, "loaded_at": None}
-
-def _evict_model_if_stale():
-    c = _model_container()
-    if c["loaded_at"] is not None and _time.time() - c["loaded_at"] >= _MODEL_TTL:
-        c["tokenizer"] = None
-        c["model"] = None
-        c["loaded_at"] = None
-
 def _get_model():
-    _evict_model_if_stale()
-    c = _model_container()
-    if c["model"] is None:
-        c["tokenizer"], c["model"] = load_model()
-        c["loaded_at"] = _time.time()
-    return c["tokenizer"], c["model"]
+    return load_model()
 
 
 def papers_to_csv_bytes(papers: list[dict]) -> bytes:
@@ -115,13 +98,10 @@ st.caption(
 )
 if _mem_pct is not None:
     with st.expander("Server memory", expanded=True):
-        _evict_model_if_stale()
-        _specter_is_loaded = _model_container()["model"] is not None
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("RAM used", f"{_mem_used_gb:.1f} GB")
         col_m2.metric("RAM free", f"{_mem_free_gb:.1f} GB")
         col_m3.metric("RAM total", f"{_mem_total_gb:.1f} GB")
-        col_m4.metric("SPECTER2", "Loaded" if _specter_is_loaded else "Not loaded")
         st.progress(_mem_pct / 100)
         st.caption("Memory is shared across all users. If memory is low, please wait for it to be released by another user.")
 st.markdown(
@@ -224,12 +204,6 @@ def _clear_downstream_papers():
                 "vos_json", "vos_json_url", "viz_vos_json", "viz_vos_json_url"]:
         st.session_state.pop(key, None)
 
-def _clear_downstream_embeddings():
-    # Called before replacing embeddings — clears old embeddings and everything derived from them.
-    for key in ["_dl_embeddings", "_dl_edges", "_dl_coords",
-                "vos_json", "vos_json_url", "viz_vos_json", "viz_vos_json_url"]:
-        st.session_state.pop(key, None)
-
 def _clear_downstream_edges():
     for key in ["_dl_edges", "vos_json", "vos_json_url"]:
         st.session_state.pop(key, None)
@@ -308,7 +282,7 @@ def handle_panel_upload(upload_key: str, slot_key: str):
             st.session_state["_dl_papers"] = raw
         elif slot_key == "embeddings":
             parse_embeddings_csv(raw)  # validate
-            _clear_downstream_embeddings()
+            _clear_downstream_papers()
             st.session_state["_dl_embeddings"] = raw
         elif slot_key == "edges":
             parse_edge_csv(raw)  # validate
@@ -425,15 +399,13 @@ with st.expander("One click map", expanded=True):
                         _clear_downstream_papers()
                         st.session_state["_dl_papers"] = _ocm_dl
 
-                        _evict_model_if_stale()
-                        _ocm_init_text = "Encoding papers..." if _model_container()["model"] is not None else "Loading SPECTER2 model — this happens only once per session and takes about 30 seconds..."
-                        _ocm_prog = st.progress(0, text=_ocm_init_text)
+                        _ocm_prog = st.progress(0, text="Encoding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
                         _ocm_tokenizer, _ocm_model = _get_model()
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                         _ocm_emb_bytes = embed_papers(_ocm_dl, _ocm_tokenizer, _ocm_model, progress_callback=_ocm_cb)
                         _ocm_prog.progress(1.0, text="Embeddings done.")
-                        _clear_downstream_embeddings()
+                        _clear_downstream_papers()
                         st.session_state["_dl_embeddings"] = _ocm_emb_bytes
 
                         _ocm_prog2 = st.progress(0, text="Building network...")
@@ -548,16 +520,14 @@ with st.expander("2. Embeddings", expanded=False):
                 st.error("No papers loaded. Upload a file in the Paper Input section first.")
             else:
                 st.session_state["running"] = True
-                _evict_model_if_stale()
-                _init_text = "Encoding papers..." if _model_container()["model"] is not None else "Loading SPECTER2 model — this happens only once per session and takes about 30 seconds..."
-                prog = st.progress(0, text=_init_text)
+                prog = st.progress(0, text="Encoding papers... The first run in the session may take about 30 extra seconds to start while the model loads.")
                 def _cb(cur, tot):
                     prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                 try:
                     _tokenizer, _model = _get_model()
                     _dl_emb = embed_papers(st.session_state["_dl_papers"], _tokenizer, _model, progress_callback=_cb)
                     prog.progress(1.0, text="Done.")
-                    _clear_downstream_embeddings()
+                    _clear_downstream_papers()
                     st.session_state["_dl_embeddings"] = _dl_emb
                 except Exception as _e:
                     st.session_state["_job_error"] = f"Embedding failed: {_e}"
