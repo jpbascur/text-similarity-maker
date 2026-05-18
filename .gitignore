@@ -10,8 +10,8 @@ venv/
 env/
 
 # Generated static files (session artifacts)
-static/*.txt
-static/*.json
+app/static/*.txt
+app/static/*.json
 
 # Streamlit cache
 .streamlit/secrets.toml
