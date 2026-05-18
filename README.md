@@ -21,7 +21,7 @@ Use the **One click map** for the simplest experience, or the step-by-step secti
 | 2 · Embed | Papers CSV | Embeddings CSV (SPECTER2 vectors) |
 | 3 · Network | Embeddings CSV | Network CSV (cosine similarity edge list) |
 | 3 · UMAP | Embeddings CSV | Coordinates CSV (2D layout) |
-| 4 · Export | Papers + Network/Coordinates | VOSviewer JSON |
+| 4 · Export | Papers + Network / Coordinates | VOSviewer JSON |
 
 Each file can be saved and re-uploaded independently — you never have to re-run earlier steps if the outputs already exist.
 
@@ -32,6 +32,20 @@ Each file can be saved and re-uploaded independently — you never have to re-ru
 - **PubMed** (.txt, .nbib) — from the PubMed website
 - **Excel** (.xlsx) — manually built spreadsheets with columns `id`, `title`, `abstract`
 
+## Repo structure
+
+```
+Dockerfile            # App image — builds on top of the base image
+Dockerfile.base       # Base image — installs dependencies and pre-downloads SPECTER2
+DOCKER_prefetch.py    # Run at build time to cache the SPECTER2 model on disk
+requirements.txt
+app/
+  streamlit_app.py    # UI — all pipeline logic imported from pipeline.py
+  pipeline.py         # Six pure functions, one per output file
+  sample_papers.ris   # Demo file for the download button
+  static/             # Session JSON files served to VOSviewer Online (auto-cleaned after 24 h)
+```
+
 ## Tech stack
 
 - [Streamlit](https://streamlit.io) — UI
@@ -41,16 +55,14 @@ Each file can be saved and re-uploaded independently — you never have to re-ru
 
 ## Deployment
 
-The app ships as two Docker images:
-
-- **Base image** (`Dockerfile.base`) — installs dependencies and pre-downloads the SPECTER2 model
-- **App image** (`Dockerfile`) — copies app code on top of the base image
+The app uses a two-stage Docker build to keep deploys fast. The base image bakes in all dependencies and the SPECTER2 model so the app image only needs to copy the code.
 
 ```bash
-# Build base image (once, when deps or model change)
-docker build -f Dockerfile.base -t tsm-base .
+# Build and push base image (only needed when dependencies or model change)
+docker build -f Dockerfile.base -t ghcr.io/jpbascur/tsm-base:latest .
+docker push ghcr.io/jpbascur/tsm-base:latest
 
-# Build and run app
+# Build and run app image
 docker build -t tsm .
 docker run -p 7860:7860 tsm
 ```
