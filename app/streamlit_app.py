@@ -101,7 +101,8 @@ if _mem_pct is not None:
 st.markdown(
     "Upload your papers and get a text similarity science map. "
     "Use the One click map for the simplest experience, "
-    "or the step-by-step sections below for more control."
+    "or the step-by-step sections below for more control and speed. "
+    "If you get stuck, reload."
 )
 st.markdown(
     "**Supported input formats:**\n\n"

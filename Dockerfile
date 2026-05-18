@@ -10,7 +10,7 @@ EXPOSE 7860
 # Cloud Run sets PORT=8080, HF Spaces expects 7860 (the default here)
 ENV PORT=7860
 
-CMD streamlit run streamlit_app.py \
+CMD streamlit run app/streamlit_app.py \
     --server.port=$PORT \
     --server.address=0.0.0.0 \
     --server.headless=true
