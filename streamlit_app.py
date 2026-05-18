@@ -23,7 +23,9 @@ Display caches (keyed by file identity, never fed into the pipeline):
 ``_raw_parsed``     — parsed paper list for Step-1 preview
 ``ocm_raw_parsed``  — parsed paper list for OCM preview
 """
+import csv
 import hashlib
+import io
 import json
 import os
 import uuid
@@ -37,7 +39,6 @@ from pipeline import (
     build_vos_coords_json,
     build_vos_network_json,
     embed_papers,
-    papers_to_csv_bytes,
     parse_coords_csv,
     parse_edge_csv,
     parse_embeddings_csv,
@@ -45,6 +46,15 @@ from pipeline import (
     parse_reference_file,
     umap_reduce,
 )
+
+
+def papers_to_csv_bytes(papers: list[dict]) -> bytes:
+    """Serialise a list of paper dicts to CSV bytes (columns: id, title, abstract)."""
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
+    w.writeheader()
+    w.writerows(papers)
+    return buf.getvalue().encode()
 
 # ── memory (read before any st calls so variables are available anywhere) ─────
 def _read_cgroup_mem():

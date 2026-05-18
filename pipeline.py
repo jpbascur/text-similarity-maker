@@ -1,9 +1,10 @@
 """
 TSM pipeline — six functions, one per output file.
 
-Each function is self-contained: its helpers are defined directly above it.
-The shared utilities at the top (parse_* / *_to_csv_bytes) describe the
-intermediate file formats and are used by more than one function.
+Each function owns its single-use helpers, defined directly above it.
+Two parsers are shared across multiple functions and live at the top:
+  - parse_papers_csv    (used by embed_papers, build_vos_network_json, build_vos_coords_json)
+  - parse_embeddings_csv (used by build_edge_list, umap_reduce)
 
 Data flow
 ---------
@@ -24,9 +25,7 @@ import numpy as np
 import pandas as pd
 
 
-# ── shared file-format utilities ──────────────────────────────────────────────
-# These describe how intermediate files are serialised.  Each pipeline function
-# that reads or writes a file uses these — they are not business logic.
+# ── shared parsers (used by more than one pipeline function) ──────────────────
 
 def parse_papers_csv(data: bytes) -> list[dict]:
     """Parse a papers CSV (columns: id, title, abstract) into a list of dicts."""
@@ -40,15 +39,6 @@ def parse_papers_csv(data: bytes) -> list[dict]:
             f"Missing columns: {missing}. The file must have columns: id, title, abstract."
         )
     return df.to_dict("records")
-
-
-def papers_to_csv_bytes(papers: list[dict]) -> bytes:
-    """Serialise a list of paper dicts to CSV bytes (columns: id, title, abstract)."""
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["id", "title", "abstract"])
-    w.writeheader()
-    w.writerows(papers)
-    return buf.getvalue().encode()
 
 
 def parse_embeddings_csv(data: bytes) -> tuple[np.ndarray, list[str]]:
@@ -74,58 +64,6 @@ def parse_embeddings_csv(data: bytes) -> tuple[np.ndarray, list[str]]:
             "This file does not look like a SPECTER2 embeddings file."
         )
     return arr, ids
-
-
-def embeddings_to_csv_bytes(embeddings: np.ndarray, ids: list[str]) -> bytes:
-    """Serialise embeddings to CSV bytes (no header, first column = id)."""
-    buf = io.StringIO()
-    for row_id, row in zip(ids, embeddings):
-        buf.write(row_id + "," + ",".join(f"{v:.8f}" for v in row) + "\n")
-    return buf.getvalue().encode()
-
-
-def parse_edge_csv(data: bytes) -> list[tuple[int, int, float]]:
-    """Parse a network CSV (columns: source, target, weight) into an edge list."""
-    try:
-        df = pd.read_csv(io.BytesIO(data), usecols=["source", "target", "weight"])
-    except ValueError as exc:
-        raise ValueError("The file must have columns: source, target, weight.") from exc
-    except pd.errors.EmptyDataError as exc:
-        raise ValueError("The network file is empty.") from exc
-    return list(zip(
-        df["source"].to_numpy(dtype=np.int64).tolist(),
-        df["target"].to_numpy(dtype=np.int64).tolist(),
-        df["weight"].to_numpy(dtype=np.float64).tolist(),
-    ))
-
-
-def edges_to_csv_bytes(edges: list[tuple[int, int, float]]) -> bytes:
-    """Serialise an edge list to CSV bytes (columns: source, target, weight)."""
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["source", "target", "weight"])
-    w.writerows(edges)
-    return buf.getvalue().encode()
-
-
-def parse_coords_csv(data: bytes) -> tuple[list[str], np.ndarray]:
-    """Parse a coordinates CSV (columns: id, x, y) into (ids, array)."""
-    try:
-        df = pd.read_csv(io.BytesIO(data), usecols=["id", "x", "y"])
-    except ValueError as exc:
-        raise ValueError("The file must have columns: id, x, y.") from exc
-    except pd.errors.EmptyDataError as exc:
-        raise ValueError("The coordinates file is empty.") from exc
-    return df["id"].astype(str).tolist(), df[["x", "y"]].to_numpy(dtype=np.float32)
-
-
-def coords_to_csv_bytes(ids: list[str], coords: np.ndarray) -> bytes:
-    """Serialise 2D coordinates to CSV bytes (columns: id, x, y)."""
-    buf = io.StringIO()
-    buf.write("id,x,y\n")
-    for pid, (x, y) in zip(ids, coords):
-        buf.write(f"{pid},{x:.6f},{y:.6f}\n")
-    return buf.getvalue().encode()
 
 
 # ── 1. parse_reference_file ───────────────────────────────────────────────────
@@ -280,6 +218,13 @@ def parse_reference_file(data: bytes, filename: str, ignore_incomplete: bool = F
 # Input:  papers CSV bytes
 # Output: embeddings CSV bytes
 
+def _embeddings_to_csv_bytes(embeddings: np.ndarray, ids: list[str]) -> bytes:
+    buf = io.StringIO()
+    for row_id, row in zip(ids, embeddings):
+        buf.write(row_id + "," + ",".join(f"{v:.8f}" for v in row) + "\n")
+    return buf.getvalue().encode()
+
+
 def _check_embedding_dependencies():
     from importlib.metadata import PackageNotFoundError, version
     try:
@@ -349,12 +294,20 @@ def embed_papers(papers_csv: bytes, progress_callback=None) -> bytes:
                 progress_callback(min(start + batch_size, len(papers)), len(papers))
 
     embeddings = np.vstack(all_embeddings).astype(np.float32)
-    return embeddings_to_csv_bytes(embeddings, ids)
+    return _embeddings_to_csv_bytes(embeddings, ids)
 
 
 # ── 3. build_edge_list ────────────────────────────────────────────────────────
 # Input:  embeddings CSV bytes
 # Output: network CSV bytes
+
+def _edges_to_csv_bytes(edges: list[tuple[int, int, float]]) -> bytes:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["source", "target", "weight"])
+    w.writerows(edges)
+    return buf.getvalue().encode()
+
 
 def _cosine_normalize(embeddings: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -410,12 +363,27 @@ def build_edge_list(
             progress_callback(end, n)
 
     edges = [(i, j, w) for (i, j), w in sorted(edge_map.items())]
-    return edges_to_csv_bytes(edges)
+    return _edges_to_csv_bytes(edges)
 
 
 # ── 4. build_vos_network_json ─────────────────────────────────────────────────
 # Input:  papers CSV bytes + network CSV bytes
 # Output: VOSviewer network JSON dict
+
+def parse_edge_csv(data: bytes) -> list[tuple[int, int, float]]:
+    """Parse a network CSV (columns: source, target, weight) into an edge list."""
+    try:
+        df = pd.read_csv(io.BytesIO(data), usecols=["source", "target", "weight"])
+    except ValueError as exc:
+        raise ValueError("The file must have columns: source, target, weight.") from exc
+    except pd.errors.EmptyDataError as exc:
+        raise ValueError("The network file is empty.") from exc
+    return list(zip(
+        df["source"].to_numpy(dtype=np.int64).tolist(),
+        df["target"].to_numpy(dtype=np.int64).tolist(),
+        df["weight"].to_numpy(dtype=np.float64).tolist(),
+    ))
+
 
 def build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str = "auto") -> dict:
     """Build a VOSviewer network JSON from papers and edges file bytes.
@@ -448,6 +416,14 @@ def build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str 
 # Input:  embeddings CSV bytes
 # Output: coordinates CSV bytes
 
+def _coords_to_csv_bytes(ids: list[str], coords: np.ndarray) -> bytes:
+    buf = io.StringIO()
+    buf.write("id,x,y\n")
+    for pid, (x, y) in zip(ids, coords):
+        buf.write(f"{pid},{x:.6f},{y:.6f}\n")
+    return buf.getvalue().encode()
+
+
 def umap_reduce(
     embeddings_csv: bytes,
     n_neighbors: int = 15,
@@ -475,12 +451,23 @@ def umap_reduce(
         random_state=random_state,
     )
     coords = reducer.fit_transform(embeddings).astype(np.float32)
-    return coords_to_csv_bytes(ids, coords)
+    return _coords_to_csv_bytes(ids, coords)
 
 
 # ── 6. build_vos_coords_json ──────────────────────────────────────────────────
 # Input:  papers CSV bytes + coordinates CSV bytes
 # Output: VOSviewer coordinate JSON dict
+
+def parse_coords_csv(data: bytes) -> tuple[list[str], np.ndarray]:
+    """Parse a coordinates CSV (columns: id, x, y) into (ids, array)."""
+    try:
+        df = pd.read_csv(io.BytesIO(data), usecols=["id", "x", "y"])
+    except ValueError as exc:
+        raise ValueError("The file must have columns: id, x, y.") from exc
+    except pd.errors.EmptyDataError as exc:
+        raise ValueError("The coordinates file is empty.") from exc
+    return df["id"].astype(str).tolist(), df[["x", "y"]].to_numpy(dtype=np.float32)
+
 
 def build_vos_coords_json(papers_csv: bytes, coords_csv: bytes) -> dict:
     """Build a VOSviewer coordinate JSON from papers and coordinates file bytes.
