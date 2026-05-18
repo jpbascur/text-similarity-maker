@@ -25,6 +25,8 @@ Use the **One click map** for the simplest experience, or the step-by-step secti
 
 Each file can be saved and re-uploaded independently — you never have to re-run earlier steps if the outputs already exist.
 
+All pipeline logic lives in `app/pipeline.py`. Each of the six main functions is self-contained: it takes file bytes as input and returns file bytes as output, with no dependency on Streamlit or the web app. You can copy any function directly into your own script or notebook — just bring the helper functions defined above it (noted in the section header comments).
+
 ## Supported input formats
 
 - **RIS** (.ris) — Scopus, Web of Science, Zotero, Mendeley, EndNote
