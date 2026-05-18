@@ -50,7 +50,7 @@ from pipeline import (
 )
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading SPECTER2 model...")
 def _get_model():
     return load_model()
 
