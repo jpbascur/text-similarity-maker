@@ -28,6 +28,7 @@ import hashlib
 import io
 import json
 import os
+import time as _time
 import uuid
 from pathlib import Path
 from urllib.parse import urlencode
@@ -49,9 +50,26 @@ from pipeline import (
 )
 
 
-@st.cache_resource(ttl=3600)
+_MODEL_TTL = 3600
+
+@st.cache_resource
+def _model_container() -> dict:
+    return {"tokenizer": None, "model": None, "loaded_at": None}
+
+def _evict_model_if_stale():
+    c = _model_container()
+    if c["loaded_at"] is not None and _time.time() - c["loaded_at"] >= _MODEL_TTL:
+        c["tokenizer"] = None
+        c["model"] = None
+        c["loaded_at"] = None
+
 def _get_model():
-    return load_model()
+    _evict_model_if_stale()
+    c = _model_container()
+    if c["model"] is None:
+        c["tokenizer"], c["model"] = load_model()
+        c["loaded_at"] = _time.time()
+    return c["tokenizer"], c["model"]
 
 
 def papers_to_csv_bytes(papers: list[dict]) -> bytes:
@@ -97,10 +115,13 @@ st.caption(
 )
 if _mem_pct is not None:
     with st.expander("Server memory", expanded=True):
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("Used", f"{_mem_used_gb:.1f} GB")
-        col_m2.metric("Free", f"{_mem_free_gb:.1f} GB")
-        col_m3.metric("Total", f"{_mem_total_gb:.1f} GB")
+        _evict_model_if_stale()
+        _specter_is_loaded = _model_container()["model"] is not None
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("RAM used", f"{_mem_used_gb:.1f} GB")
+        col_m2.metric("RAM free", f"{_mem_free_gb:.1f} GB")
+        col_m3.metric("RAM total", f"{_mem_total_gb:.1f} GB")
+        col_m4.metric("SPECTER2", "Loaded" if _specter_is_loaded else "Not loaded")
         st.progress(_mem_pct / 100)
         st.caption("Memory is shared across all users. If memory is low, please wait for it to be released by another user.")
 st.markdown(
@@ -340,7 +361,6 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
 
 # Housekeeping on every page load.
-import time as _time
 _now = _time.time()
 for _f in _STATIC_DIR.glob("*.json"):      # static JSON files older than 24 h
     if _now - _f.stat().st_mtime > 86400:
@@ -405,8 +425,10 @@ with st.expander("One click map", expanded=True):
                         _clear_downstream_papers()
                         st.session_state["_dl_papers"] = _ocm_dl
 
+                        _evict_model_if_stale()
+                        _ocm_init_text = "Encoding papers..." if _model_container()["model"] is not None else "Loading SPECTER2 model — this happens only once per session and takes about 30 seconds..."
+                        _ocm_prog = st.progress(0, text=_ocm_init_text)
                         _ocm_tokenizer, _ocm_model = _get_model()
-                        _ocm_prog = st.progress(0, text="Encoding papers...")
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                         _ocm_emb_bytes = embed_papers(_ocm_dl, _ocm_tokenizer, _ocm_model, progress_callback=_ocm_cb)
@@ -526,7 +548,9 @@ with st.expander("2. Embeddings", expanded=False):
                 st.error("No papers loaded. Upload a file in the Paper Input section first.")
             else:
                 st.session_state["running"] = True
-                prog = st.progress(0, text="Encoding papers...")
+                _evict_model_if_stale()
+                _init_text = "Encoding papers..." if _model_container()["model"] is not None else "Loading SPECTER2 model — this happens only once per session and takes about 30 seconds..."
+                prog = st.progress(0, text=_init_text)
                 def _cb(cur, tot):
                     prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                 try:
