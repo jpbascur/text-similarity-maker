@@ -506,6 +506,13 @@ if _is_running:
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
 
+# Delete static JSON files older than 24 hours on every page load.
+import time as _time
+_now = _time.time()
+for _f in _STATIC_DIR.glob("*.json"):
+    if _now - _f.stat().st_mtime > 86400:
+        _f.unlink(missing_ok=True)
+
 def _public_app_base_url() -> str | None:
     for env_name in ("PUBLIC_BASE_URL", "APP_BASE_URL", "STREAMLIT_PUBLIC_URL"):
         value = os.environ.get(env_name, "").strip()
