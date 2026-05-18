@@ -263,7 +263,7 @@ def load_model():
     return tokenizer, model
 
 
-def embed_papers(papers_csv: bytes, tokenizer, model, batch_size: int = 64, progress_callback=None) -> bytes:
+def embed_papers(papers_csv: bytes, tokenizer, model, batch_size: int = 16, progress_callback=None) -> bytes:
     """Encode papers with SPECTER2 + proximity adapter; return embeddings CSV bytes.
 
     Args:
