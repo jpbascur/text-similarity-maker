@@ -28,7 +28,10 @@ import pandas as pd
 # ── shared parsers (used by more than one pipeline function) ──────────────────
 
 def parse_papers_csv(data: bytes) -> list[dict]:
-    """Parse a papers CSV (columns: id, title, abstract) into a list of dicts."""
+    """Parse a papers CSV (columns: id, title, abstract) into a list of dicts.
+
+    Shared by: embed_papers, build_vos_network_json, build_vos_coords_json.
+    """
     try:
         df = pd.read_csv(io.BytesIO(data), dtype=str, keep_default_na=False)
     except pd.errors.EmptyDataError as exc:
@@ -42,7 +45,10 @@ def parse_papers_csv(data: bytes) -> list[dict]:
 
 
 def parse_embeddings_csv(data: bytes) -> tuple[np.ndarray, list[str]]:
-    """Parse an embeddings CSV (no header, first column = id) into (array, ids)."""
+    """Parse an embeddings CSV (no header, first column = id) into (array, ids).
+
+    Shared by: build_edge_list, umap_reduce.
+    """
     try:
         df = pd.read_csv(io.BytesIO(data), header=None)
     except pd.errors.EmptyDataError as exc:
@@ -174,13 +180,14 @@ def _parse_excel(data: bytes) -> list[dict]:
             f"Columns found in file: {list(df.columns)}. "
             "The spreadsheet must have columns named 'id', 'title', and 'abstract'."
         )
+    assert id_col is not None and title_col is not None and abstract_col is not None
     result = []
-    for i, row in df.iterrows():
+    for i, (_, row) in enumerate(df.iterrows(), start=1):
         title    = row[title_col].strip()
         abstract = row[abstract_col].strip()
         id_      = row[id_col].strip()
         if not id_:
-            raise ValueError(f"Row {i + 1} has an empty id. Every row must have an id value.")
+            raise ValueError(f"Row {i} has an empty id. Every row must have an id value.")
         if title:
             result.append({"id": id_, "title": title, "abstract": abstract})
     return result
@@ -217,6 +224,7 @@ def parse_reference_file(data: bytes, filename: str, ignore_incomplete: bool = F
 # ── 2. embed_papers ───────────────────────────────────────────────────────────
 # Input:  papers CSV bytes
 # Output: embeddings CSV bytes
+# Note:   embed_papers calls parse_papers_csv (defined above). If you copy embed_papers, copy that function too.
 
 def _embeddings_to_csv_bytes(embeddings: np.ndarray, ids: list[str]) -> bytes:
     buf = io.StringIO()
@@ -243,11 +251,12 @@ def _check_embedding_dependencies():
         )
 
 
-_model_cache: dict = {}
+loaded_model: dict = {}  # keys: tokenizer, model, loaded_at — managed by the app
+
 
 def _load_model():
-    if _model_cache:
-        return _model_cache["tokenizer"], _model_cache["model"]
+    if loaded_model:
+        return loaded_model["tokenizer"], loaded_model["model"]
     _check_embedding_dependencies()
     from transformers import AutoTokenizer
     from adapters import AutoAdapterModel
@@ -255,31 +264,27 @@ def _load_model():
     model = AutoAdapterModel.from_pretrained("allenai/specter2_base")
     model.load_adapter("allenai/specter2", source="hf", load_as="proximity", set_active=True)
     model.eval()
-    _model_cache["tokenizer"] = tokenizer
-    _model_cache["model"]     = model
+    loaded_model["tokenizer"] = tokenizer
+    loaded_model["model"]     = model
     return tokenizer, model
 
 
-def embed_papers(papers_csv: bytes, progress_callback=None) -> bytes:
+def embed_papers(papers_csv: bytes, batch_size: int = 64, progress_callback=None) -> bytes:
     """Encode papers with SPECTER2 + proximity adapter; return embeddings CSV bytes.
-
-    Papers without a title or abstract are skipped — SPECTER2 produces
-    meaningless vectors for empty inputs.
 
     Args:
         papers_csv:        Papers CSV bytes (columns: id, title, abstract).
-        progress_callback: Optional callable(current, total) called after each batch.
+        batch_size:        Number of papers to encode per forward pass (default 64).
+        progress_callback: Optional function(current, total) called after each batch.
+                           Use this to update a progress bar in your UI. Leave as None
+                           if you don't need progress updates (e.g. scripts, notebooks).
 
     Returns embeddings CSV bytes (no header; first column = paper id).
     """
     import torch
 
-    papers = [
-        p for p in parse_papers_csv(papers_csv)
-        if p.get("title", "").strip() and p.get("abstract", "").strip()
-    ]
+    papers = parse_papers_csv(papers_csv)
     tokenizer, model = _load_model()
-    batch_size = 64
     all_embeddings, ids = [], []
 
     with torch.no_grad():
@@ -300,6 +305,7 @@ def embed_papers(papers_csv: bytes, progress_callback=None) -> bytes:
 # ── 3. build_edge_list ────────────────────────────────────────────────────────
 # Input:  embeddings CSV bytes
 # Output: network CSV bytes
+# Note:   build_edge_list calls parse_embeddings_csv (defined above). If you copy build_edge_list, copy that function too.
 
 def _edges_to_csv_bytes(edges: list[tuple[int, int, float]]) -> bytes:
     buf = io.StringIO()
@@ -307,12 +313,6 @@ def _edges_to_csv_bytes(edges: list[tuple[int, int, float]]) -> bytes:
     w.writerow(["source", "target", "weight"])
     w.writerows(edges)
     return buf.getvalue().encode()
-
-
-def _cosine_normalize(embeddings: np.ndarray) -> np.ndarray:
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms = np.where(norms == 0, 1.0, norms)
-    return embeddings / norms
 
 
 def build_edge_list(
@@ -327,57 +327,61 @@ def build_edge_list(
         embeddings_csv:    Embeddings CSV bytes (no header; first column = paper id).
         top_k:             Number of nearest neighbours per paper.
         min_similarity:    Edges below this cosine similarity are dropped.
-        progress_callback: Optional callable(current, total) called after each batch.
+        progress_callback: Optional function(current, total) called after each batch.
+                           Use this to update a progress bar in your UI. Leave as None
+                           if you don't need progress updates (e.g. scripts, notebooks).
 
     Returns network CSV bytes (columns: source, target, weight).
     """
-    embeddings, _ids = parse_embeddings_csv(embeddings_csv)
-    normed = _cosine_normalize(embeddings)
-    n = len(normed)
-    edge_map: dict[tuple[int, int], float] = {}
+    embeddings, _ = parse_embeddings_csv(embeddings_csv)
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    unit_embeddings = embeddings / np.where(norms == 0, 1.0, norms)
+    n_papers = len(unit_embeddings)
+    edges: dict[tuple[int, int], float] = {}
     batch_size = 256
 
-    for start in range(0, n, batch_size):
-        end = min(start + batch_size, n)
-        batch = normed[start:end]
-        sims = batch @ normed.T
+    for batch_start in range(0, n_papers, batch_size):
+        batch_end = min(batch_start + batch_size, n_papers)
+        batch = unit_embeddings[batch_start:batch_end]
+        similarities = batch @ unit_embeddings.T  # (batch, n_papers)
 
-        for local_idx in range(end - start):
-            global_idx = start + local_idx
-            row = sims[local_idx].copy()
-            row[global_idx] = -1.0
-            top_indices = (
-                np.argpartition(row, -top_k)[-top_k:] if top_k < n - 1 else np.arange(n)
+        for batch_offset in range(batch_end - batch_start):
+            paper_idx = batch_start + batch_offset
+            paper_sims = similarities[batch_offset].copy()
+            paper_sims[paper_idx] = -1.0  # exclude self
+
+            neighbors = (
+                np.argpartition(paper_sims, -top_k)[-top_k:]
+                if top_k < n_papers - 1 else np.arange(n_papers)
             )
-            for j in top_indices:
-                if j == global_idx:
+            for neighbor_idx in neighbors:
+                if neighbor_idx == paper_idx:
                     continue
-                w = float(row[j])
-                if w < min_similarity:
+                similarity = float(paper_sims[neighbor_idx])
+                if similarity < min_similarity:
                     continue
-                i, jj = (global_idx, int(j)) if global_idx < int(j) else (int(j), global_idx)
-                key = (i, jj)
-                edge_map[key] = edge_map.get(key, 0.0) + w
+                a, b = (paper_idx, int(neighbor_idx)) if paper_idx < int(neighbor_idx) else (int(neighbor_idx), paper_idx)
+                edges[(a, b)] = edges.get((a, b), 0.0) + similarity
 
         if progress_callback:
-            progress_callback(end, n)
+            progress_callback(batch_end, n_papers)
 
-    edges = [(i, j, w) for (i, j), w in sorted(edge_map.items())]
-    return _edges_to_csv_bytes(edges)
+    return _edges_to_csv_bytes([(a, b, w) for (a, b), w in sorted(edges.items())])
 
 
 # ── 4. build_vos_network_json ─────────────────────────────────────────────────
 # Input:  papers CSV bytes + network CSV bytes
 # Output: VOSviewer network JSON dict
+# Note:   build_vos_network_json calls parse_papers_csv (defined above). If you copy build_vos_network_json, copy that function too.
 
 def parse_edge_csv(data: bytes) -> list[tuple[int, int, float]]:
     """Parse a network CSV (columns: source, target, weight) into an edge list."""
     try:
         df = pd.read_csv(io.BytesIO(data), usecols=["source", "target", "weight"])
-    except ValueError as exc:
-        raise ValueError("The file must have columns: source, target, weight.") from exc
     except pd.errors.EmptyDataError as exc:
         raise ValueError("The network file is empty.") from exc
+    except ValueError as exc:
+        raise ValueError("The file must have columns: source, target, weight.") from exc
     return list(zip(
         df["source"].to_numpy(dtype=np.int64).tolist(),
         df["target"].to_numpy(dtype=np.int64).tolist(),
@@ -415,6 +419,7 @@ def build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str 
 # ── 5. umap_reduce ────────────────────────────────────────────────────────────
 # Input:  embeddings CSV bytes
 # Output: coordinates CSV bytes
+# Note:   umap_reduce calls parse_embeddings_csv (defined above). If you copy umap_reduce, copy that function too.
 
 def _coords_to_csv_bytes(ids: list[str], coords: np.ndarray) -> bytes:
     buf = io.StringIO()
@@ -440,7 +445,7 @@ def umap_reduce(
 
     Returns coordinates CSV bytes (columns: id, x, y).
     """
-    from umap import UMAP
+    from umap import UMAP  # type: ignore[import-untyped]
 
     embeddings, ids = parse_embeddings_csv(embeddings_csv)
     reducer = UMAP(
@@ -457,15 +462,16 @@ def umap_reduce(
 # ── 6. build_vos_coords_json ──────────────────────────────────────────────────
 # Input:  papers CSV bytes + coordinates CSV bytes
 # Output: VOSviewer coordinate JSON dict
+# Note:   build_vos_coords_json calls parse_papers_csv (defined above). If you copy build_vos_coords_json, copy that function too.
 
 def parse_coords_csv(data: bytes) -> tuple[list[str], np.ndarray]:
     """Parse a coordinates CSV (columns: id, x, y) into (ids, array)."""
     try:
         df = pd.read_csv(io.BytesIO(data), usecols=["id", "x", "y"])
-    except ValueError as exc:
-        raise ValueError("The file must have columns: id, x, y.") from exc
     except pd.errors.EmptyDataError as exc:
         raise ValueError("The coordinates file is empty.") from exc
+    except ValueError as exc:
+        raise ValueError("The file must have columns: id, x, y.") from exc
     return df["id"].astype(str).tolist(), df[["x", "y"]].to_numpy(dtype=np.float32)
 
 

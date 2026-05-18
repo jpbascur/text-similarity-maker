@@ -39,6 +39,7 @@ from pipeline import (
     build_vos_coords_json,
     build_vos_network_json,
     embed_papers,
+    loaded_model,
     parse_coords_csv,
     parse_edge_csv,
     parse_embeddings_csv,
@@ -330,12 +331,16 @@ if _is_running:
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
 
-# Delete static JSON files older than 24 hours on every page load.
+# Housekeeping on every page load.
 import time as _time
 _now = _time.time()
-for _f in _STATIC_DIR.glob("*.json"):
+for _f in _STATIC_DIR.glob("*.json"):      # static JSON files older than 24 h
     if _now - _f.stat().st_mtime > 86400:
         _f.unlink(missing_ok=True)
+if _now - float(loaded_model.get("loaded_at", 0)) > 3600:   # SPECTER2 model older than 1 h
+    import gc
+    loaded_model.clear()
+    gc.collect()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -400,6 +405,7 @@ with st.expander("One click map", expanded=True):
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                         _ocm_emb_bytes = embed_papers(_ocm_dl, progress_callback=_ocm_cb)
+                        loaded_model["loaded_at"] = _now
                         _ocm_prog.progress(1.0, text="Embeddings done.")
                         _clear_downstream_embeddings()
                         st.session_state["_dl_embeddings"] = _ocm_emb_bytes
@@ -520,6 +526,7 @@ with st.expander("2. Embeddings", expanded=False):
                     prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                 try:
                     _dl_emb = embed_papers(st.session_state["_dl_papers"], progress_callback=_cb)
+                    loaded_model["loaded_at"] = _now
                     prog.progress(1.0, text="Done.")
                 finally:
                     st.session_state["running"] = False
