@@ -113,7 +113,7 @@ st.markdown(
 with st.expander("How to export with abstracts included", expanded=False):
     st.markdown(
         "This tool needs title and abstract for each paper. "
-        "Papers without an abstract are skipped at the embedding step. "
+        "Abstracts improve embedding quality — papers with only a title produce weaker vectors. "
         "Follow the instructions below for your source to make sure abstracts are included.\n\n"
 
         "---\n\n"
@@ -176,7 +176,7 @@ with st.expander("How to export with abstracts included", expanded=False):
         "**Google Scholar** — abstracts are NOT included in the export\n\n"
         "Google Scholar's BibTeX export only contains basic metadata "
         "(title, authors, year, venue) and does not include abstracts. "
-        "Papers imported this way will have no abstract and will be skipped at the embedding step. "
+        "Papers imported this way will have no abstract, which reduces embedding quality. "
         "If your papers are on Google Scholar, the best approach is to import them into Zotero "
         "using the Zotero browser connector (which captures the abstract), "
         "and then export from Zotero.\n\n"
@@ -432,9 +432,10 @@ with st.expander("One click map", expanded=True):
                     st.rerun()
 
     if "vos_json" in st.session_state:
-        _n_papers = len(parse_papers_csv(st.session_state["_dl_papers"]))
-        _n_edges  = len(parse_edge_csv(st.session_state["_dl_edges"]))
-        st.success(f"Map ready - {_n_papers} papers, {_n_edges} connections.")
+        _n_papers = len(parse_papers_csv(st.session_state["_dl_papers"])) if "_dl_papers" in st.session_state else 0
+        _n_edges  = len(parse_edge_csv(st.session_state["_dl_edges"])) if "_dl_edges" in st.session_state else None
+        _ocm_summary = f"{_n_papers} papers" + (f", {_n_edges} connections" if _n_edges is not None else "")
+        st.success(f"Map ready — {_ocm_summary}.")
         _ocm_vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
         if _ocm_vos_url:
             st.link_button("Open in VOSviewer Online", _ocm_vos_url, type="primary", use_container_width=True)
@@ -515,7 +516,7 @@ with st.expander("2. Embeddings", expanded=False):
 
     with col_srv:
         st.markdown("**Generate on this server**")
-        st.caption("Runs using SPECTER2. Papers without title or abstract are skipped.")
+        st.caption("Runs using SPECTER2. All papers are embedded, including those without an abstract.")
         if st.button("Generate embeddings", key="run_embed", disabled=_is_running, use_container_width=True):
             if "_dl_papers" not in st.session_state:
                 st.error("No papers loaded. Upload a file in the Paper Input section first.")
@@ -658,7 +659,9 @@ with st.expander("3. Create Map", expanded=False):
             st.error(st.session_state["_upload_error_ul_adv_network_vos"])
 
     if "vos_json" in st.session_state:
-        st.success(f"Network map ready - {len(parse_edge_csv(st.session_state['_dl_edges']))} connections.")
+        _edge_count = len(parse_edge_csv(st.session_state["_dl_edges"])) if "_dl_edges" in st.session_state else None
+        _net_summary = f"{_edge_count} connections" if _edge_count is not None else "ready"
+        st.success(f"Network map {_net_summary}.")
         vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
         if vos_url:
             st.link_button("Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)

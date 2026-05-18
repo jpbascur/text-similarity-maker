@@ -298,6 +298,8 @@ def embed_papers(papers_csv: bytes, batch_size: int = 64, progress_callback=None
             if progress_callback:
                 progress_callback(min(start + batch_size, len(papers)), len(papers))
 
+    if not all_embeddings:
+        raise ValueError("No papers to embed — the papers CSV is empty.")
     embeddings = np.vstack(all_embeddings).astype(np.float32)
     return _embeddings_to_csv_bytes(embeddings, ids)
 
