@@ -91,7 +91,7 @@ st.caption(
     "Source: [github.com/jpbascur/text-similarity-maker](https://github.com/jpbascur/text-similarity-maker)"
 )
 if _mem_pct is not None:
-    with st.expander("Server memory", expanded=False):
+    with st.expander("Server memory", expanded=True):
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Used", f"{_mem_used_gb:.1f} GB")
         col_m2.metric("Free", f"{_mem_free_gb:.1f} GB")
@@ -405,7 +405,7 @@ with st.expander("One click map", expanded=True):
                         def _ocm_cb(cur, tot):
                             _ocm_prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                         _ocm_emb_bytes = embed_papers(_ocm_dl, progress_callback=_ocm_cb)
-                        loaded_model["loaded_at"] = _now
+                        loaded_model["loaded_at"] = _time.time()
                         _ocm_prog.progress(1.0, text="Embeddings done.")
                         _clear_downstream_embeddings()
                         st.session_state["_dl_embeddings"] = _ocm_emb_bytes
