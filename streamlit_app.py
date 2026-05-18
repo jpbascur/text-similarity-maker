@@ -327,6 +327,8 @@ if "running" not in st.session_state:
 _is_running = st.session_state["running"]
 if _is_running:
     st.warning("A job is already running in this session. Please wait for it to finish.")
+if "_job_error" in st.session_state:
+    st.error(st.session_state.pop("_job_error"))
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
@@ -426,7 +428,7 @@ with st.expander("One click map", expanded=True):
                         st.session_state["vos_json"]     = json.dumps(_ocm_vos, indent=2)
                         st.session_state["vos_json_url"] = _write_static_json(f"{_ocm_sid}_network.json", _ocm_vos)
                     except Exception as _ocm_err:
-                        st.error(f"Error creating map: {_ocm_err}")
+                        st.session_state["_job_error"] = f"Error creating map: {_ocm_err}"
                     finally:
                         st.session_state["running"] = False
                     st.rerun()
@@ -527,12 +529,14 @@ with st.expander("2. Embeddings", expanded=False):
                     prog.progress(cur / tot, text=f"Encoding {cur}/{tot}...")
                 try:
                     _dl_emb = embed_papers(st.session_state["_dl_papers"], progress_callback=_cb)
-                    loaded_model["loaded_at"] = _now
+                    loaded_model["loaded_at"] = _time.time()
                     prog.progress(1.0, text="Done.")
+                    _clear_downstream_embeddings()
+                    st.session_state["_dl_embeddings"] = _dl_emb
+                except Exception as _e:
+                    st.session_state["_job_error"] = f"Embedding failed: {_e}"
                 finally:
                     st.session_state["running"] = False
-                _clear_downstream_embeddings()
-                st.session_state["_dl_embeddings"] = _dl_emb
                 st.rerun()
         st.caption("Or upload an embeddings CSV:")
         st.file_uploader(
@@ -627,6 +631,8 @@ with st.expander("3. Create Map", expanded=False):
                     vos_data = build_vos_network_json(st.session_state["_dl_papers"], _edges_bytes, clustering=_clustering_val)
                     st.session_state["vos_json"]     = json.dumps(vos_data, indent=2)
                     st.session_state["vos_json_url"] = _write_static_json(f"{sid}_network.json", vos_data)
+                except Exception as _e:
+                    st.session_state["_job_error"] = f"Network build failed: {_e}"
                 finally:
                     st.session_state["running"] = False
                 st.rerun()
@@ -708,6 +714,8 @@ with st.expander("3. Create Map", expanded=False):
                     vos_data = build_vos_coords_json(st.session_state["_dl_papers"], _coords_bytes)
                     st.session_state["viz_vos_json"]     = json.dumps(vos_data, indent=2)
                     st.session_state["viz_vos_json_url"] = _write_static_json(f"{sid}_umap.json", vos_data)
+                except Exception as _e:
+                    st.session_state["_job_error"] = f"UMAP failed: {_e}"
                 finally:
                     st.session_state["running"] = False
                 st.rerun()
