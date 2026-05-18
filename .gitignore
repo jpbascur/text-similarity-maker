@@ -11,6 +11,7 @@ env/
 
 # Generated static files (session artifacts)
 static/*.txt
+static/*.json
 
 # Streamlit cache
 .streamlit/secrets.toml
