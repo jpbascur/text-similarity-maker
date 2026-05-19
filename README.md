@@ -11,6 +11,8 @@ pinned: false
 
 Turn a list of scientific papers into a [VOSviewer](https://www.vosviewer.com) science map based on text similarity.
 
+**Live app:** [huggingface.co/spaces/juanbascur/text-similarity-maker](https://huggingface.co/spaces/juanbascur/text-similarity-maker)
+
 Use the **One click map** for the simplest experience, or the step-by-step sections below for more control. If you get stuck, reload.
 
 ## Supported input formats
