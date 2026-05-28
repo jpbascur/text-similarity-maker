@@ -462,7 +462,7 @@ with st.expander("One click map", expanded=True):
         _n_edges  = len(parse_edge_csv(st.session_state["_dl_edges"])) if "_dl_edges" in st.session_state else None
         _ocm_summary = f"{_n_papers} papers" + (f", {_n_edges} connections" if _n_edges is not None else "")
         st.success(f"Map ready — {_ocm_summary}.")
-        _ocm_vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
+        _ocm_vos_url = _vosviewer_url(st.session_state.get("vos_json_url"))
         if _ocm_vos_url:
             st.link_button("Open in VOSviewer Online", _ocm_vos_url, type="primary", use_container_width=True)
         else:
@@ -701,7 +701,7 @@ with st.expander("3. Create Map", expanded=False):
         _edge_count = len(parse_edge_csv(st.session_state["_dl_edges"])) if "_dl_edges" in st.session_state else None
         _net_summary = f"{_edge_count} connections" if _edge_count is not None else "ready"
         st.success(f"Network map {_net_summary}.")
-        vos_url = _vosviewer_url(st.session_state.get("vos_json_url"), max_n_links=0)
+        vos_url = _vosviewer_url(st.session_state.get("vos_json_url"))
         if vos_url:
             st.link_button("Open in VOSviewer Online", vos_url, type="primary", use_container_width=True)
         else:
