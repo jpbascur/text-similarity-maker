@@ -25,6 +25,7 @@ print("Downloading model...")
 model = AutoAdapterModel.from_pretrained(model_name)
 
 print("Downloading proximity adapter...")
-model.load_adapter(adapter_name, source="hf", load_as="proximity", set_active=True)
+loaded_adapter_name = model.load_adapter(adapter_name, source="hf", load_as="proximity", set_active=True)
+model.active_adapters = loaded_adapter_name
 
 print("Done.")

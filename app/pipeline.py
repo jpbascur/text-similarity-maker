@@ -272,7 +272,8 @@ def load_model():
     from adapters import AutoAdapterModel
     tokenizer = AutoTokenizer.from_pretrained("allenai/specter2_base")
     model = AutoAdapterModel.from_pretrained("allenai/specter2_base")
-    model.load_adapter("allenai/specter2", source="hf", load_as="proximity", set_active=True)
+    adapter_name = model.load_adapter("allenai/specter2", source="hf", load_as="proximity", set_active=True)
+    model.active_adapters = adapter_name
     model.eval()
     return tokenizer, model
 
