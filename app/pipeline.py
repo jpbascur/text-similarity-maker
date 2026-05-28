@@ -72,6 +72,23 @@ def parse_embeddings_csv(data: bytes) -> tuple[np.ndarray, list[str]]:
     return arr, ids
 
 
+def validate_embedding_ids_match_papers(papers_csv: bytes, embeddings_csv: bytes) -> None:
+    """Raise if embeddings are not in the same ID order as the papers CSV."""
+    papers = parse_papers_csv(papers_csv)
+    _, embedding_ids = parse_embeddings_csv(embeddings_csv)
+    paper_ids = [str(p.get("id", "")) for p in papers]
+    if embedding_ids != paper_ids:
+        raise ValueError(
+            "Embedding IDs do not match the papers CSV in the same order. "
+            "Regenerate embeddings from this papers file, or upload the matching papers CSV first."
+        )
+
+
+def paper_has_title_and_abstract(paper: dict) -> bool:
+    """Return True when a parsed paper has non-empty title and abstract text."""
+    return bool(paper.get("title", "").strip() and paper.get("abstract", "").strip())
+
+
 # ── 1. parse_reference_file ───────────────────────────────────────────────────
 # Input:  reference export bytes (.ris / .bib / .txt / .nbib / .xlsx)
 # Output: papers CSV bytes
@@ -99,8 +116,8 @@ def _parse_pubmed(text: str) -> list[dict]:
     if current:
         records.append(current)
     return [
-        {"id": r["PMID"].strip(), "title": r["TI"].strip(), "abstract": r.get("AB", "").strip()}
-        for r in records if "PMID" in r and "TI" in r
+        {"id": r["PMID"].strip(), "title": r.get("TI", "").strip(), "abstract": r.get("AB", "").strip()}
+        for r in records if "PMID" in r
     ]
 
 
@@ -131,8 +148,7 @@ def _parse_ris(text: str) -> list[dict]:
         id_ = r.get("ID") or r.get("AN") or r.get("UT") or r.get("DO") or str(i + 1)
         title = r.get("TI") or r.get("T1", "")
         abstract = r.get("AB") or r.get("N2", "")
-        if title:
-            result.append({"id": id_.strip(), "title": title.strip(), "abstract": abstract.strip()})
+        result.append({"id": id_.strip(), "title": title.strip(), "abstract": abstract.strip()})
     return result
 
 
@@ -153,8 +169,7 @@ def _parse_bibtex(text: str) -> list[dict]:
             return ""
         title = _field("title")
         abstract = _field("abstract")
-        if title:
-            result.append({"id": key, "title": title, "abstract": abstract})
+        result.append({"id": key, "title": title, "abstract": abstract})
     return result
 
 
@@ -188,8 +203,7 @@ def _parse_excel(data: bytes) -> list[dict]:
         id_      = row[id_col].strip()
         if not id_:
             raise ValueError(f"Row {i} has an empty id. Every row must have an id value.")
-        if title:
-            result.append({"id": id_, "title": title, "abstract": abstract})
+        result.append({"id": id_, "title": title, "abstract": abstract})
     return result
 
 
@@ -217,7 +231,7 @@ def parse_reference_file(data: bytes, filename: str, ignore_incomplete: bool = F
     else:
         papers = _parse_pubmed(data.decode("utf-8", errors="replace"))
     if ignore_incomplete:
-        papers = [p for p in papers if p.get("title", "").strip() and p.get("abstract", "").strip()]
+        papers = [p for p in papers if paper_has_title_and_abstract(p)]
     return papers
 
 
@@ -228,8 +242,9 @@ def parse_reference_file(data: bytes, filename: str, ignore_incomplete: bool = F
 
 def _embeddings_to_csv_bytes(embeddings: np.ndarray, ids: list[str]) -> bytes:
     buf = io.StringIO()
+    w = csv.writer(buf)
     for row_id, row in zip(ids, embeddings):
-        buf.write(row_id + "," + ",".join(f"{v:.8f}" for v in row) + "\n")
+        w.writerow([row_id, *[f"{v:.8f}" for v in row]])
     return buf.getvalue().encode()
 
 
@@ -358,6 +373,7 @@ def build_edge_list(
                 if similarity < min_similarity:
                     continue
                 a, b = (paper_idx, int(neighbor_idx)) if paper_idx < int(neighbor_idx) else (int(neighbor_idx), paper_idx)
+                # Intentional: reciprocal top-k selections strengthen the undirected edge.
                 edges[(a, b)] = edges.get((a, b), 0.0) + similarity
 
         if progress_callback:
@@ -399,8 +415,15 @@ def build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str 
     """
     papers = parse_papers_csv(papers_csv)
     edges  = parse_edge_csv(edges_csv)
+    n_papers = len(papers)
+    bad_edges = [(i, j) for i, j, _ in edges if i < 0 or j < 0 or i >= n_papers or j >= n_papers]
+    if bad_edges:
+        i, j = bad_edges[0]
+        raise ValueError(
+            f"The network contains an edge ({i}, {j}) outside the papers range 0-{n_papers - 1}."
+        )
     items  = [
-        {"id": str(idx + 1), "label": p.get("title", p.get("id", str(idx + 1))),
+        {"id": str(idx + 1), "label": p.get("title") or p.get("id") or str(idx + 1),
          "description": str(p.get("id", ""))}
         for idx, p in enumerate(papers)
     ]
@@ -420,9 +443,10 @@ def build_vos_network_json(papers_csv: bytes, edges_csv: bytes, clustering: str 
 
 def _coords_to_csv_bytes(ids: list[str], coords: np.ndarray) -> bytes:
     buf = io.StringIO()
-    buf.write("id,x,y\n")
+    w = csv.writer(buf)
+    w.writerow(["id", "x", "y"])
     for pid, (x, y) in zip(ids, coords):
-        buf.write(f"{pid},{x:.6f},{y:.6f}\n")
+        w.writerow([pid, f"{x:.6f}", f"{y:.6f}"])
     return buf.getvalue().encode()
 
 
@@ -490,7 +514,7 @@ def build_vos_coords_json(papers_csv: bytes, coords_csv: bytes) -> dict:
         pid = str(paper.get("id", idx + 1))
         x, y = coord_lookup.get(pid, (0.0, 0.0))
         items.append({
-            "id": str(idx + 1), "label": paper.get("title", pid),
+            "id": str(idx + 1), "label": paper.get("title") or pid,
             "description": pid, "x": round(x, 6), "y": round(y, 6), "cluster": 1,
         })
     return {"network": {"items": items, "links": []}}

@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - requirements.txt
-      - download_model.py
+      - DOCKER_prefetch.py
   workflow_dispatch:  # allow manual trigger
 
 jobs:

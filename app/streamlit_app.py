@@ -41,13 +41,20 @@ from pipeline import (
     build_vos_network_json,
     embed_papers,
     load_model,
+    paper_has_title_and_abstract,
     parse_coords_csv,
     parse_edge_csv,
     parse_embeddings_csv,
     parse_papers_csv,
     parse_reference_file,
     umap_reduce,
+    validate_embedding_ids_match_papers,
 )
+
+ONE_CLICK_TOP_K = 20
+ONE_CLICK_MIN_SIMILARITY = 0.0
+ONE_CLICK_CLUSTERING_LABEL = "Auto (VOSviewer detects clusters)"
+ONE_CLICK_CLUSTERING_VALUE = "auto"
 
 
 @st.cache_resource(show_spinner="Loading SPECTER2 model...")
@@ -270,6 +277,7 @@ def handle_panel_upload(upload_key: str, slot_key: str):
     try:
         if slot_key == "ocm_raw":
             st.session_state["ocm_raw_file"] = (file_obj.name, raw)
+            st.session_state["raw_file"] = (file_obj.name, raw)
             st.session_state.pop("ocm_raw_parsed", None)
             st.session_state.pop("ocm_raw_parsed_key", None)
         elif slot_key == "raw":
@@ -282,6 +290,8 @@ def handle_panel_upload(upload_key: str, slot_key: str):
             st.session_state["_dl_papers"] = raw
         elif slot_key == "embeddings":
             parse_embeddings_csv(raw)  # validate
+            if "_dl_papers" in st.session_state:
+                validate_embedding_ids_match_papers(st.session_state["_dl_papers"], raw)
             _clear_downstream_papers()
             st.session_state["_dl_embeddings"] = raw
         elif slot_key == "edges":
@@ -331,6 +341,7 @@ if _is_running:
 if "_job_error" in st.session_state:
     st.error(st.session_state.pop("_job_error"))
 
+# Streamlit serves ./static relative to the running app file at /app/static/<file>.
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
 
@@ -383,10 +394,21 @@ with st.expander("One click map", expanded=True):
         if "ocm_raw_parsed" in st.session_state:
             _ocm_refs = st.session_state["ocm_raw_parsed"]
             _ocm_n = len(_ocm_refs)
-            _ocm_n_abs = sum(1 for p in _ocm_refs if p["abstract"])
-            st.caption(f"{_ocm_n} papers found - {_ocm_n_abs} with abstracts, {_ocm_n - _ocm_n_abs} without.")
+            _ocm_n_complete = sum(1 for p in _ocm_refs if paper_has_title_and_abstract(p))
+            st.caption(
+                f"{_ocm_n} papers found - {_ocm_n_complete} with title and abstract, "
+                f"{_ocm_n - _ocm_n_complete} missing title or abstract."
+            )
             if _ocm_n > 0 and st.button(
                 "Create map", key="ocm_create", type="primary",
+                help=(
+                    "Settings used by One click map, so you can repeat it in the normal workflow: "
+                    "Step 1 setting: keep papers even if they have no title or abstract. "
+                    "Step 2 setting: generate embeddings on this server. "
+                    "Step 3 setting: create a Network map, connect each paper to its 20 most "
+                    "similar papers, keep all similarity links, and let VOSviewer choose the "
+                    "colors/groups automatically."
+                ),
                 disabled=_is_running, use_container_width=True,
             ):
                 _ocm_papers = parse_reference_file(_ocm_bytes, _ocm_fname, ignore_incomplete=False)
@@ -407,20 +429,26 @@ with st.expander("One click map", expanded=True):
                         _ocm_prog.progress(1.0, text="Embeddings done.")
                         _clear_downstream_papers()
                         st.session_state["_dl_embeddings"] = _ocm_emb_bytes
+                        validate_embedding_ids_match_papers(_ocm_dl, _ocm_emb_bytes)
 
                         _ocm_prog2 = st.progress(0, text="Building network...")
                         def _ocm_cb_net(cur, tot):
                             _ocm_prog2.progress(cur / tot, text=f"Processing {cur}/{tot} papers...")
                         with st.spinner("Computing similarities..."):
                             _ocm_edges_bytes = build_edge_list(
-                                _ocm_emb_bytes, top_k=20, min_similarity=0.0, progress_callback=_ocm_cb_net,
+                                _ocm_emb_bytes,
+                                top_k=ONE_CLICK_TOP_K,
+                                min_similarity=ONE_CLICK_MIN_SIMILARITY,
+                                progress_callback=_ocm_cb_net,
                             )
                         _ocm_prog2.progress(1.0, text="Network done.")
                         _clear_downstream_edges()
                         st.session_state["_dl_edges"] = _ocm_edges_bytes
 
                         _ocm_sid = st.session_state["session_id"]
-                        _ocm_vos = build_vos_network_json(_ocm_dl, _ocm_edges_bytes, clustering="auto")
+                        _ocm_vos = build_vos_network_json(
+                            _ocm_dl, _ocm_edges_bytes, clustering=ONE_CLICK_CLUSTERING_VALUE
+                        )
                         st.session_state["vos_json"]     = json.dumps(_ocm_vos, indent=2)
                         st.session_state["vos_json_url"] = _write_static_json(f"{_ocm_sid}_network.json", _ocm_vos)
                     except Exception as _ocm_err:
@@ -479,8 +507,11 @@ with st.expander("1. Paper Input", expanded=False):
         if "_raw_parsed" in st.session_state:
             papers_ref = st.session_state["_raw_parsed"]
             n_total = len(papers_ref)
-            n_abstract = sum(1 for p in papers_ref if p["abstract"])
-            st.caption(f"{n_total} papers found - {n_abstract} with abstracts, {n_total - n_abstract} without.")
+            n_complete = sum(1 for p in papers_ref if paper_has_title_and_abstract(p))
+            st.caption(
+                f"{n_total} papers found - {n_complete} with title and abstract, "
+                f"{n_total - n_complete} missing title or abstract."
+            )
             if n_total > 0 and st.button("Use these papers", key="load_ref", type="primary"):
                 papers_to_use = parse_reference_file(raw_bytes, raw_fname, ignore_incomplete=ignore)
                 _clear_downstream_papers()
@@ -590,23 +621,26 @@ with st.expander("3. Create Map", expanded=False):
     with col_net_gen:
         st.markdown("**Build from embeddings**")
         _net_top_k = st.slider(
-            "Connections per paper (top_k)", min_value=1, max_value=50, value=20, step=1,
+            "Connections per paper (top_k)", min_value=1, max_value=50, value=ONE_CLICK_TOP_K, step=1,
             key="net_top_k",
             help="How many nearest neighbours each paper is connected to.",
         )
         _net_min_sim = st.slider(
-            "Minimum similarity", min_value=0.0, max_value=1.0, value=0.0, step=0.01,
+            "Minimum similarity", min_value=0.0, max_value=1.0, value=ONE_CLICK_MIN_SIMILARITY, step=0.01,
             key="net_min_sim",
             help="Edges below this cosine similarity are dropped.",
         )
         _net_clustering = st.radio(
             "Clustering in VOSviewer",
-            options=["Auto (VOSviewer detects clusters)", "None (all papers same color)"],
+            options=[ONE_CLICK_CLUSTERING_LABEL, "None (all papers same color)"],
+            index=0,
             key="net_clustering",
             help="Auto lets VOSviewer run its own clustering algorithm. None puts all papers in one group.",
         )
         if st.button("Build network map", key="run_network", disabled=_is_running, use_container_width=True):
-            if "_dl_embeddings" not in st.session_state:
+            if "_dl_papers" not in st.session_state:
+                st.error("No papers loaded. Upload or load the matching papers CSV first.")
+            elif "_dl_embeddings" not in st.session_state:
                 st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
             else:
                 st.session_state["running"] = True
@@ -614,6 +648,9 @@ with st.expander("3. Create Map", expanded=False):
                 def _cb_net(cur, tot):
                     prog.progress(cur / tot, text=f"Processing {cur}/{tot} papers...")
                 try:
+                    validate_embedding_ids_match_papers(
+                        st.session_state["_dl_papers"], st.session_state["_dl_embeddings"]
+                    )
                     with st.spinner("Computing similarities..."):
                         _edges_bytes = build_edge_list(
                             st.session_state["_dl_embeddings"],
@@ -691,14 +728,19 @@ with st.expander("3. Create Map", expanded=False):
             help="Minimum distance between points in the 2D layout. Lower = tighter clusters.",
         )
         if st.button("Build coordinate map", key="run_umap", disabled=_is_running, use_container_width=True):
-            if "_dl_embeddings" not in st.session_state:
+            if "_dl_papers" not in st.session_state:
+                st.error("No papers loaded. Upload or load the matching papers CSV first.")
+            elif "_dl_embeddings" not in st.session_state:
                 st.error("No embeddings loaded. Generate or upload embeddings in the Embeddings section first.")
             else:
-                _emb_arr, _ = parse_embeddings_csv(st.session_state["_dl_embeddings"])
-                n = len(_emb_arr)
-                estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
                 st.session_state["running"] = True
                 try:
+                    validate_embedding_ids_match_papers(
+                        st.session_state["_dl_papers"], st.session_state["_dl_embeddings"]
+                    )
+                    _emb_arr, _ = parse_embeddings_csv(st.session_state["_dl_embeddings"])
+                    n = len(_emb_arr)
+                    estimate = "a few seconds" if n < 500 else "~30 seconds" if n < 2000 else "a few minutes"
                     with st.spinner(f"Running UMAP on {n} papers... ({estimate})"):
                         _coords_bytes = umap_reduce(
                             st.session_state["_dl_embeddings"],
