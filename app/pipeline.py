@@ -258,11 +258,10 @@ def _check_embedding_dependencies():
             "Missing embedding dependency. Install the pinned requirements with "
             "`pip install -r requirements.txt`."
         ) from exc
-    major_minor = tuple(int(p) for p in transformers_version.split(".")[:2])
-    if major_minor < (4, 40) or major_minor >= (4, 52):
+    if transformers_version != "4.57.6" or adapters_version != "1.3.0":
         raise RuntimeError(
             f"Incompatible transformers {transformers_version} / adapters {adapters_version}. "
-            "Install pinned requirements: transformers>=4.40,<4.52."
+            "Install pinned requirements: transformers==4.57.6 and adapters==1.3.0."
         )
 
 

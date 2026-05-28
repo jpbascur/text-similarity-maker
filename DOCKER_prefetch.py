@@ -5,11 +5,11 @@ Run once at Docker build time so the model is baked into the image.
 from importlib.metadata import version
 
 transformers_version = version("transformers")
-major_minor = tuple(int(part) for part in transformers_version.split(".")[:2])
-if major_minor < (4, 40) or major_minor >= (4, 52):
+adapters_version = version("adapters")
+if transformers_version != "4.57.6" or adapters_version != "1.3.0":
     raise RuntimeError(
-        f"Unsupported transformers {transformers_version}. "
-        "Install requirements.txt so transformers stays in the supported >=4.40,<4.52 range."
+        f"Unsupported transformers {transformers_version} / adapters {adapters_version}. "
+        "Install requirements.txt so transformers==4.57.6 and adapters==1.3.0."
     )
 
 from transformers import AutoTokenizer
