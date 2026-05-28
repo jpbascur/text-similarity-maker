@@ -61,6 +61,20 @@ app/
 
 The app uses a two-stage Docker build to keep deploys fast. The base image bakes in all dependencies and the SPECTER2 model so the app image only needs to copy the code.
 
+Important: this repository's GitHub branch is `master`, but the Hugging Face Space is served from its `main` branch. Pushing to the Space remote's `master` branch can succeed without changing the live app. Deploy app code to Hugging Face with:
+
+```bash
+git push hf master:main
+```
+
+After deploying, verify the served Space source, not only the git push output:
+
+```bash
+curl https://huggingface.co/spaces/juanbascur/text-similarity-maker/raw/main/app/streamlit_app.py
+```
+
+If dependency or model-loading files changed, rebuild the base image first through the GitHub Actions workflow, then push the app code to `hf/main`.
+
 ```bash
 # Build and push base image (only needed when dependencies or model change)
 docker build -f Dockerfile.base -t ghcr.io/jpbascur/tsm-base:latest .
